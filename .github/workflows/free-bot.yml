@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   bot:
-    if: github.event_name != 'schedule' || vars.BOT_ENABLED == 'true'
+    if: github.event_name != 'schedule' || vars.BOT_ENABLED != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -50,5 +50,5 @@ jobs:
           BOT_MODE: ${{ inputs.mode }}
         run: python free_bot.py "$BOT_MODE"
       - name: Scheduled command
-        if: github.event_name == 'schedule' && vars.BOT_ENABLED == 'true'
+        if: github.event_name == 'schedule' && vars.BOT_ENABLED != 'false'
         run: python free_bot.py daily
