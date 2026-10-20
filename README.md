@@ -11,7 +11,7 @@ Gemini 키는 **결제 계정이 연결되지 않은 무료 프로젝트**에서
 무료 프로젝트임을 확인한 뒤 Repository Variable `FREE_TIER_CONFIRMED=true`를 등록합니다.
 Actions → Free family weekend bot → Run workflow → `check`로 연결 테스트를 실행합니다. 이 모드는 텔레그램 테스트 메시지와 Gemini 짧은 응답을 확인하며 인스타그램 글을 만들지 않습니다.
 
-테스트가 성공한 뒤 기존 맥 로컬 작업을 중지하고 Repository Variable `BOT_ENABLED=true`를 등록해야 예약이 실행됩니다. 이 변수 없이 예약은 비활성입니다.
+연결 테스트 성공 후 클라우드 예약을 활성화했습니다. 기존 맥 로컬 작업은 중지했습니다. 예약을 중지하려면 Repository Variable `BOT_ENABLED=false`로 설정하고, 재개하려면 `true`로 바꾸세요. `FREE_TIER_CONFIRMED=true`와 필수 Secrets는 계속 필요합니다.
 
 ## 실행 흐름
 
