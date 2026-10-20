@@ -41,3 +41,9 @@ GitHub 공개 저장소 표준 runner 무료 범위, Zernio 연결 계정 2개·
 카드는 사진이나 AI 일러스트가 아닌 디자인 정보 카드입니다. 최종 게시 전에 사용자가 내용과 이미지를 검토합니다.
 
 공식 문서: [GitHub Actions](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [Gemini 가격](https://ai.google.dev/gemini-api/docs/pricing), [Zernio 가격](https://docs.zernio.com/pricing).
+
+## 텔레그램 수정 요청
+
+`수정 게시물ID 체험 프로그램을 더 자세히 써줘`처럼 보냅니다. 등록된 사용자만 요청할 수 있으며 약 15분 간격으로 확인합니다. 본문·정보 카드를 다시 생성하고 공식 출처를 재검토한 뒤 수정본을 전송합니다. 기존 승인은 취소되며 수정본 안내 이후 새로 보낸 `승인 게시물ID`만 게시를 허용합니다.
+
+보류된 초안도 승인 기한 내에는 수정할 수 있습니다. 수정 실패 시 자동 게시하지 않으며 기존 요청을 자동 반복하지 않습니다. 새 수정 요청으로 다시 시도할 수 있습니다. 이미 게시한 글은 이 기능의 대상이 아닙니다. 수정도 Gemini 무료 한도를 사용하며 한도 초과 시 중단합니다.
