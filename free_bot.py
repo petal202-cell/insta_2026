@@ -91,7 +91,7 @@ class Bot:
         if not 7 <= now.hour < 10 or any(p.get('metadata', {}).get(TAG, {}).get('day') == day for p in ledgers):
             return
         ledger = self.z('/posts', 'POST', {'isDraft': True, 'tags': [TAG],
-            'content': '자동화 상태 기록 — 게시 대상 아님',
+            'content': f'자동화 상태 기록 {day} — 게시 대상 아님',
             'metadata': {TAG: {'day': day, 'phase': 'building'}}})['post']
         try:
             self.build(ledger, now)
@@ -189,7 +189,7 @@ caption은 어린이 체험·놀이·공연의 구체적인 내용, 비용·예�
                 raise RuntimeError('Missing GitHub secret/variable: ' + key)
         if mode == 'check':
             self.z('/accounts')
-            self.telegram('✅ 무료 GitHub 자동화 연결 테스트입니다. 실제 인스타그램 게시물은 만들지 않았어요.')
+            self.telegram('✅ 무료 GitHub 자동화 연결 테스트입니다. 실제 인스타그램 게시물은 만들지 않았어요.\n확인 시각: ' + dt.datetime.now(KST).isoformat(timespec='seconds'))
             self.gemini('연결 확인이라고 한 줄만 답해주세요.')
             return
         if not self.env.get('GEMINI_API_KEY'):
