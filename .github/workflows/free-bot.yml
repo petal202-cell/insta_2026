@@ -1,0 +1,54 @@
+name: Free family weekend bot
+on:
+  push:
+    paths: ['free_bot.py', 'card.py', 'test_free_bot.py', '.github/workflows/free-bot.yml']
+  schedule:
+    - cron: '7 22 * * *'
+    - cron: '11,26,41,56 * * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'check: 연결 테스트 / daily: 초안 생성 / poll: 승인 확인'
+        type: choice
+        options: [check, daily, poll]
+        default: check
+permissions:
+  contents: read
+concurrency:
+  group: family-weekend-single-writer
+  cancel-in-progress: false
+jobs:
+  bot:
+    if: github.event_name != 'schedule' || vars.BOT_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
+      INSTAGRAM_ACCOUNT_ID: ${{ vars.INSTAGRAM_ACCOUNT_ID || fromJSON(secrets.BOT_CONFIG || '{}').INSTAGRAM_ACCOUNT_ID }}
+      TELEGRAM_ACCOUNT_ID: ${{ vars.TELEGRAM_ACCOUNT_ID || fromJSON(secrets.BOT_CONFIG || '{}').TELEGRAM_ACCOUNT_ID }}
+      TELEGRAM_CONVERSATION_ID: ${{ vars.TELEGRAM_CONVERSATION_ID || fromJSON(secrets.BOT_CONFIG || '{}').TELEGRAM_CONVERSATION_ID }}
+      APPROVER_ID: ${{ vars.APPROVER_ID || fromJSON(secrets.BOT_CONFIG || '{}').APPROVER_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: python -m unittest -v
+      - name: Install Korean font
+        if: github.event_name != 'push'
+        run: sudo apt-get update -qq && sudo apt-get install -y fonts-noto-cjk
+      - name: Verify free project acknowledgement
+        if: github.event_name != 'push'
+        env:
+          FREE_TIER_CONFIRMED: ${{ vars.FREE_TIER_CONFIRMED }}
+        run: test "$FREE_TIER_CONFIRMED" = true
+      - name: Manual command
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          BOT_MODE: ${{ inputs.mode }}
+        run: python free_bot.py "$BOT_MODE"
+      - name: Scheduled command
+        if: github.event_name == 'schedule' && vars.BOT_ENABLED == 'true'
+        run: python free_bot.py daily
