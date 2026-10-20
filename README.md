@@ -1,54 +1,43 @@
-# 주말 아이들과 나들이 Instagram 승인 자동화
+# 주말 아이들과 나들이 — 무료 클라우드 자동화
 
-Render의 단일 Background Worker와 1GB 영구 디스크로 실행합니다. 맥북에 의존하지 않습니다.
+Render 서버나 OpenAI API를 쓰지 않습니다. GitHub Actions 표준 Linux runner + Gemini 2.5 Flash 무료 등급 + Pillow 정보 카드 + 기존 Zernio 연결을 사용합니다.
 
-## 동작
+## 설정
 
-- 매일 한국 시간 오전 7시대 첫 실행에 이번 주말 서울·경기 축제 한 곳을 공식 출처로 검색합니다.
-- 어린이 체험·공연·놀이, 비용·예약, 방문 팁을 담은 본문과 4:5 AI 일러스트를 생성하고 별도로 검토합니다.
-- Zernio에 Instagram 초안으로 저장하고 텔레그램에 동일한 이미지와 본문을 보냅니다.
-- 등록한 사용자만 `승인 게시물ID` 또는 `보류 게시물ID`로 결정합니다. 약 1분 간격으로 확인합니다.
-- 승인 전 초안과 게시 시점의 계정·문구·이미지를 비교하고 다르면 게시하지 않습니다.
-- 승인 유효기간은 최대 36시간, 행사 종료 시각 이전입니다. 날짜가 지난 초안은 새 검토가 필요합니다.
-- 재시작·통신 오류로 게시 결과가 불분명하면 조회만 하며 자동 재시도하지 않습니다.
-- 오전 7시대 내내 서버가 중단됐다면 해당 날짜 초안 생성은 건너뜁니다. 추후 수동 검토가 필요합니다.
+Repository Secrets에 `GEMINI_API_KEY`, `ZERNIO_API_KEY`, `BOT_CONFIG`를 등록합니다. BOT_CONFIG는 INSTAGRAM_ACCOUNT_ID, TELEGRAM_ACCOUNT_ID, TELEGRAM_CONVERSATION_ID, APPROVER_ID를 담은 JSON 객체입니다. 사용자별 ID와 키는 공개 코드에 저장하지 않습니다.
 
-## 배포 전 준비
+Gemini 키는 **결제 계정이 연결되지 않은 무료 프로젝트**에서 발급해야 합니다. 무료 한도를 넘으면 중단하며 유료 모델로 우회하지 않습니다. 결제 프로젝트 키를 쓰면 이 코드도 과금될 수 있습니다. Google 무료 등급의 입력은 서비스 개선에 사용될 수 있으므로 공개 행사 정보만 전송합니다.
 
-`render.yaml`은 초기 `AUTOMATION_ENABLED=false`로 생성되며 실제 게시가 비활성 상태입니다.
-Blueprint를 Render에 적용하고 아래 값을 Environment에 등록합니다. API 키는 채팅이나 GitHub에 넣지 마세요.
+무료 프로젝트임을 확인한 뒤 Repository Variable `FREE_TIER_CONFIRMED=true`를 등록합니다.
+Actions → Free family weekend bot → Run workflow → `check`로 연결 테스트를 실행합니다. 이 모드는 텔레그램 테스트 메시지와 Gemini 짧은 응답을 확인하며 인스타그램 글을 만들지 않습니다.
 
-| 변수 | 용도 |
-|---|---|
-| OPENAI_API_KEY | 검색·본문·이미지 생성 및 검토, API 별도 과금 |
-| ZERNIO_API_KEY | 기존 계정의 posts·media·messages 읽기/쓰기 권한 |
-| INSTAGRAM_ACCOUNT_ID | 승인 대상 Instagram 계정 |
-| TELEGRAM_ACCOUNT_ID | 알림을 받을 연결된 텔레그램 그룹 계정 |
-| TELEGRAM_CONVERSATION_ID | 승인 메시지를 읽을 대화 ID |
-| APPROVER_ID | 게시를 승인할 텔레그램 사용자 ID |
+테스트가 성공한 뒤 기존 맥 로컬 작업을 중지하고 Repository Variable `BOT_ENABLED=true`를 등록해야 예약이 실행됩니다. 이 변수 없이 예약은 비활성입니다.
 
-API 연결·초안 알림·승인 수신을 검증한 뒤 기존 로컬 작업을 중지하고 `AUTOMATION_ENABLED=true`로 전환합니다.
-기존 로컬 초안·승인 파일은 자동 이관하지 않습니다. 기존 게시물을 재게시하지 않도록 제외 행사 기록을 확인해야 합니다.
-기존 Zernio 초안이 있으면 이를 검토한 뒤 수동 처리하고 신규 클라우드 초안과 혼동하지 마세요.
+## 실행 흐름
 
-## 비용과 운영
+- 오전 7시 7분(한국 시간)부터 이번 주말 서울·경기 어린이 체험·공연·놀이 중심 축제 한 곳을 공식 자료로 조사합니다. 오전 10시 전까지 지연을 보완합니다.
+- 공식 근거가 부족하면 초안을 만들지 않습니다. 다른 지역이나 일반 관광지로 임의 확대하지 않습니다.
+- 본문은 즐길거리·연령·비용·예약·주차 등 확인된 정보를 담습니다. 독립적인 추가 검색으로 검토합니다.
+- 1080×1350 고정 디자인 카드를 만들고 동일 이미지·본문을 텔레그램에 보냅니다.
+- `승인 게시물ID`만 게시를 허용합니다. `보류 게시물ID`는 보류합니다.
+- 등록한 사용자·대화의 새 답장만 인정하며, 편집된 메시지·오타·과거 답장·다른 게시물은 처리하지 않습니다.
+- 승인 후 계정·문구·이미지가 달라지면 게시하지 않습니다. 최대 36시간 또는 행사 종료 전까지 승인할 수 있습니다.
+- 승인 확인은 대략 15분 간격입니다. GitHub 예약은 지연·누락될 수 있으며 정각 실행을 보장하지 않습니다.
 
-유료 `0.5c-512mb` worker 1개, 영구 디스크 1GB가 필요합니다. OpenAI 및 Zernio 비용은 별도입니다.
-배포 적용 전에 Render Dashboard의 최신 요금을 확인하세요. 이 저장소를 올리는 것만으로 서버가 생성되지는 않습니다.
-단일 인스턴스만 실행하세요. 같은 앱을 여러 서비스로 복제하면 중복 생성 위험이 있습니다.
-장애는 Render 로그와 텔레그램을 확인합니다. 초안 생성 실패는 같은 날 자동 반복하지 않으므로 불필요한 API 비용을 막습니다.
-계정 연결이 만료되면 Zernio에서 재연결이 필요합니다.
+## 저장과 중복 방지
 
-## 검증
+승인 상태는 별도의 플랫폼 없는 Zernio 초안에 저장합니다. 이 초안은 `family-weekend-free-v1` 태그와 '자동화 상태 기록 — 게시 대상 아님' 문구를 가지며 절대 게시하지 않습니다. 실제 Instagram 초안 ID와 해시만 이 상태 기록에 연결합니다. GitHub 캐시나 공개 저장소에 미게시 문구·개인 메시지를 저장하지 않습니다.
 
-Python 3.12+ 표준 라이브러리만 사용합니다. `python -m unittest -v`는 실제 게시 없이 가짜 API로 승인·보류·만료·변경·중복·불명확한 결과를 검사합니다.
-실제 클라우드 API 및 이미지 생성은 유효한 키로 별도 확인해야 합니다. 공식 정보와 이미지 검토는 AI 기반이므로 최종 게시 전 사용자가 초안을 확인합니다.
+동시 실행은 GitHub concurrency로 차단합니다. 게시 직전 상태를 먼저 저장하며 결과가 불명확한 게시 요청을 자동 재시도하지 않습니다. 생성 도중 실패한 날은 자동 재생성하지 않으므로 수동 확인이 필요합니다. 초안만 중복되는 경우에도 자동 게시 권한은 생기지 않습니다.
 
-## 참고 문서
+이전 Render용 `worker.py`는 공유 검증 함수와 기존 회귀 테스트용으로 남아 있으며 무료 workflow는 해당 파일의 유료 API 메서드를 실행하지 않습니다. 유료 Render Blueprint는 제거했습니다.
 
-- https://docs.zernio.com/posts/update-post
-- https://docs.zernio.com/guides/media-uploads
-- https://docs.zernio.com/messages/get-inbox-conversation-messages
-- https://developers.openai.com/api/docs/guides/tools-web-search
-- https://developers.openai.com/api/docs/guides/image-generation
-- https://render.com/docs/blueprint-spec
+## 검증과 운영
+
+`pip install -r requirements.txt && python -m unittest -v`
+
+GitHub 공개 저장소 표준 runner 무료 범위, Zernio 연결 계정 2개·월 무료 메시지 범위를 유지하세요. 60일간 저장소 활동이 없으면 GitHub 예약이 꺼질 수 있으므로 상태 확인이 필요합니다. Gemini 무료 한도와 이용 가능 모델은 변경될 수 있습니다. 연결 테스트 없이 완전 작동한다고 간주하지 마세요.
+
+카드는 사진이나 AI 일러스트가 아닌 디자인 정보 카드입니다. 최종 게시 전에 사용자가 내용과 이미지를 검토합니다.
+
+공식 문서: [GitHub Actions](https://docs.github.com/en/billing/concepts/product-billing/github-actions), [Gemini 가격](https://ai.google.dev/gemini-api/docs/pricing), [Zernio 가격](https://docs.zernio.com/pricing).
