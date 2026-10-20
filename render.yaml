@@ -1,0 +1,39 @@
+services:
+  - type: worker
+    name: insta-weekend-approval
+    runtime: python
+    region: singapore
+    plan: 0.5c-512mb
+    numInstances: 1
+    buildCommand: python -m unittest -v
+    startCommand: python worker.py
+    autoDeployTrigger: "off"
+    disk:
+      name: approval-state
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.11
+      - key: DATA_DIR
+        value: /var/data
+      - key: AUTOMATION_ENABLED
+        value: "false"
+      - key: TEXT_MODEL
+        value: gpt-5.4
+      - key: IMAGE_MODEL
+        value: gpt-image-2
+      - key: START_DATE
+        value: "2026-10-21"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ZERNIO_API_KEY
+        sync: false
+      - key: INSTAGRAM_ACCOUNT_ID
+        sync: false
+      - key: TELEGRAM_ACCOUNT_ID
+        sync: false
+      - key: TELEGRAM_CONVERSATION_ID
+        sync: false
+      - key: APPROVER_ID
+        sync: false
