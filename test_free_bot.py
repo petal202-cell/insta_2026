@@ -2,7 +2,8 @@ import copy
 import datetime as dt
 import time
 import unittest
-from free_bot import Bot, TAG, approval
+from unittest.mock import patch
+from free_bot import Bot, TAG, approval, revision_request
 from worker import fingerprint
 
 
@@ -82,3 +83,62 @@ class FreeBotTests(unittest.TestCase):
         now = dt.datetime(2026, 10, 21, 7, 7)
         self.bot.make_daily(now, [{'metadata': {TAG: {'day': '2026-10-21', 'phase': 'error'}}}])
         self.assertEqual(self.publish, [])
+
+    def test_revision_request_bound_to_owner_and_current_preview(self):
+        msg = {**self.message, 'message': '수정 post 체험을 더 자세히 써줘'}
+        self.assertEqual(revision_request(msg, self.state, '42'), '체험을 더 자세히 써줘')
+        for change in [{'senderId': 'other'}, {'message': '수정 wrong 요청'},
+                       {'message': '수정 post '}, {'isEdited': True},
+                       {'createdAt': '2000-01-01T00:00:00Z'}]:
+            self.assertIsNone(revision_request({**msg, **change}, self.state, '42'))
+        self.assertIsNone(revision_request(msg, {**self.state, 'phase': 'publishing'}, '42'))
+        self.assertIsNone(revision_request(msg, {**self.state, 'lastCommandAt': time.time()+100}, '42'))
+        self.assertIsNotNone(revision_request(msg, {**self.state, 'phase': 'held'}, '42'))
+
+    def test_revision_failure_revokes_approval_and_does_not_repeat(self):
+        self.bot.gemini = lambda *a, **kw: (_ for _ in ()).throw(RuntimeError('quota'))
+        self.message['message'] = '수정 post 더 자세히'
+        self.bot.check(self.ledger)
+        self.assertEqual(self.ledger['metadata'][TAG]['phase'], 'revision_failed')
+        self.bot.check(self.ledger)
+        self.assertEqual(self.ledger['metadata'][TAG]['revision'], 1)
+        self.message['message'] = '승인 post'
+        self.bot.check(self.ledger)
+        self.assertEqual(self.publish, [])
+
+    def test_revision_changes_existing_draft_and_needs_new_approval(self):
+        import json
+        from worker import KST
+        end = (dt.datetime.now(KST).date() + dt.timedelta(days=10)).isoformat()
+        draft = {'available': True, 'event': '축제', 'eventEnd': end, 'dates': '이번 주말',
+                 'place': '서울', 'activities': ['체험', '공연'], 'caption': '수정된 본문 ' * 100,
+                 'sources': [{'url': 'https://example.go.kr/official', 'title': '공식 안내'}]}
+        responses = iter([json.dumps(draft), '{"ok":true}'])
+        self.bot.gemini = lambda *a, **kw: next(responses)
+        updates = []
+        def api(path, method='GET', body=None):
+            if path == '/media/presign':
+                return {'uploadUrl': 'https://upload.example', 'publicUrl': 'https://media.example/v2.png'}
+            if path.startswith('/inbox/'):
+                return {'messages': [self.message]}
+            if path == '/posts/ledger' and method == 'PUT':
+                return {'post': body}
+            if method == 'PUT':
+                updates.append(body)
+                self.assertNotIn('publishNow', body)
+                self.remote.update(content=body['content'], mediaItems=body['mediaItems'])
+            return {'post': self.remote}
+        self.bot.z = api
+        self.message['message'] = '수정 post 체험을 자세히'
+        with patch('free_bot.request'), patch('card.render_card', return_value=b'png'):
+            self.bot.check(self.ledger)
+        state = self.ledger['metadata'][TAG]
+        self.assertEqual(state['phase'], 'pending')
+        self.assertEqual(state['postId'], 'post')
+        self.assertEqual(state['revision'], 1)
+        self.assertEqual(self.remote['content'], draft['caption'])
+        self.assertEqual(len(updates), 1)
+        # Approval sent before the new preview cannot publish the revised draft.
+        self.message['message'] = '승인 post'
+        self.bot.check(self.ledger)
+        self.assertEqual(len(updates), 1)
