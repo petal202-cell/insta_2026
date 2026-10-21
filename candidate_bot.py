@@ -1,6 +1,7 @@
 """Candidate selection and separate publishing approval over Telegram."""
 import datetime as dt
 import json
+import re
 import time
 import urllib.parse
 from free_bot import Bot, TAG
@@ -75,7 +76,12 @@ class CandidateBot(Bot):
         choices = []
         for c in feed.get("candidates", []):
             begin = dt.datetime.fromisoformat(c["registration_start"]).timestamp()
-            if time.time() < begin <= time.time() + 7*86400 and c.get("candidate") and c.get("booking_url"):
+            audience = c.get("audience", "")
+            title = c.get("title", "")
+            group_only = "단체" in audience and not any(w in audience for w in ("개인", "가족"))
+            weekday_only = bool(re.search(r"\\([월화수목금](?:요일)?(?:[,/·][월화수목금])*(?:,야간)?\\)", title)) and not any(w in title for w in ("주말", "토요일", "일요일"))
+            child_related = any(w in audience for w in ("초등", "어린이", "가족", "아동"))
+            if time.time() < begin <= time.time() + 7*86400 and c.get("candidate") and c.get("booking_url") and child_related and not group_only and not weekday_only:
                 choices.append(c)
         choices.sort(key=lambda c: (c["registration_start"], c["id"]))
         choices = choices[:8]
