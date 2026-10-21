@@ -3,11 +3,24 @@ import unittest
 import time
 import copy
 import json
-from candidate_bot import selection, make_draft, CandidateBot, FLOW, TAG
+from candidate_bot import selection, make_draft, CandidateBot, FLOW, TAG, display_date, display_period
 from worker import KST, fingerprint
 from unittest.mock import patch
 
 class CandidateTests(unittest.TestCase):
+    def test_readable_dates_and_period_semantics(self):
+        self.assertEqual(display_date("2026-10-22T01:00:00Z"), "2026년 10월 22일(목) 10:00")
+        self.assertEqual(display_date("2026-11-01T00:00:00+09:00", False), "2026년 11월 1일(일)")
+        self.assertEqual(display_period("2026-11-02","2026-11-01"), "기간 정보 확인 필요")
+        self.assertEqual(display_date("invalid"), "공식 안내 확인")
+        c={"title":"체험","audience":"초1~3","place":"서울","fee_label":"무료","grade_status":"explicit_match",
+           "registration_start":"2026-10-22T10:00:00+09:00","registration_end":"2026-10-23T17:00:00+09:00",
+           "event_start":"2026-11-01T00:00:00+09:00","event_end":"2026-11-30T00:00:00+09:00","checked_at":"2026-10-21"}
+        caption=make_draft(c)["caption"]
+        self.assertNotIn("T10:",caption)
+        self.assertNotIn("+09:00",caption)
+        self.assertIn("개별 체험 날짜·시간",caption)
+
     def test_adoption_requires_owner_batch_time_and_index(self):
         stamp = dt.datetime.now(dt.timezone.utc)
         state = {"phase":"choosing","batch":"20261022","choices":[{}],"choicesAt":stamp.timestamp()-10,"choiceExpiresAt":stamp.timestamp()+100}
