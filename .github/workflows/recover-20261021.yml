@@ -53,3 +53,5 @@ jobs:
           if dt.datetime.now(KST).date().isoformat() == '2026-10-21':
               Bot().run('recover')
           PY
+
+# Recovery attempt 3: bounded format completion before factual review.
