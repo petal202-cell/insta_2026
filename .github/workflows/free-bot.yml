@@ -60,3 +60,5 @@ jobs:
       - name: Process pending Telegram command on requested manual check
         if: github.event_name == 'push' && github.event.head_commit.message == 'Process pending Telegram candidate adoption now'
         run: python candidate_bot.py poll
+
+# Refresh pending previews with keyword DM booking delivery.
