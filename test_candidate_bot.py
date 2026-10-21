@@ -86,7 +86,8 @@ class RevisionTests(unittest.TestCase):
         bot.ensure_dm(ledger,candidate)
         bot.ensure_dm(ledger,candidate)
         self.assertEqual(len(calls),1)
-        self.assertTrue(calls[0]["alsoMatchInDms"])
+        self.assertFalse(calls[0]["alsoMatchInDms"])
+        self.assertIn("❤️",calls[0]["keywords"])
         self.assertEqual(calls[0]["audience"]["followerStatus"],"any")
         self.assertIn(candidate["booking_url"],calls[0]["dmMessage"])
 
