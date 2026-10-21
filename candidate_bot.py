@@ -28,7 +28,12 @@ def selection(message, state, owner):
         return None
 
 def dm_keyword(candidate):
-    return "예약" + str(candidate.get("id", "체험"))[-6:]
+    title = candidate["title"]
+    for word, keyword in (("겨울", "겨울숲"), ("도형", "도형"), ("해금", "해금"), ("생태", "생태"), ("책방", "책방"), ("가드닝", "가드닝")):
+        if word in title:
+            return keyword
+    words = re.findall(r"[가-힣]{2,8}", re.sub(r"\\([^)]*\\)|\\[[^]]*\\]", "", title))
+    return words[-1] if words else "체험"
 
 def make_draft(candidate):
     # Deterministic copy of the official API fields; no invented sessions or activities.
