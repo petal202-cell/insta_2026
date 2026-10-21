@@ -51,9 +51,11 @@ jobs:
           import datetime as dt
           from free_bot import Bot, KST
           if dt.datetime.now(KST).date().isoformat() == '2026-10-21':
-              Bot().run('recover')
+              Bot().run('verify')
           PY
 
 # Recovery attempt 3: bounded format completion before factual review.
 
 # Last manual pre-draft recovery: enforce complete structured output.
+
+# One live verification of the corrected official-page evidence path.
