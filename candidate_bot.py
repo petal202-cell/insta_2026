@@ -47,7 +47,7 @@ def make_draft(candidate):
         "", "⚠️ 운영기간은 개별 수업 날짜와 다를 수 있습니다. 토·일 회차, 대상 학년, 보호자 동반, 실제 금액과 예약 조건은 공식 페이지에서 확인해주세요.",
         "접수 시작 안내이며 잔여석이나 예약 성공을 보장하지 않습니다.",
         "대상 확인: " + ("초등 저학년과 겹치는 대상이 명시돼 있습니다." if c["grade_status"] == "explicit_match" else "초1~3 참여 가능 여부를 추가 확인해야 합니다."),
-        "", "💌 예약 링크가 필요하면 DM으로 ‘" + dm_keyword(c) + "’을 보내주세요.",
+        "", "💌 예약 링크가 필요하면 이 게시물 댓글에 ‘" + dm_keyword(c) + "’를 남겨주세요.",
         "팔로우하지 않아도 DM으로 예약 링크를 보내드립니다.",
         "", "다음 체험 소식도 보고 싶다면 @sglide_h를 팔로우해주세요 🌿",
         "출처: 서울특별시 공공서비스예약 · " + c["checked_at"][:10],
@@ -101,7 +101,7 @@ class CandidateBot(Bot):
                 c = state["choices"][state["selectedIndex"]]
                 self.ensure_dm(ledger, c)
                 caption = remote["content"].replace(c["booking_url"], "").replace("🔗 공식 예약 안내", "")
-                caption += "\n\n💌 예약 링크가 필요하면 DM으로 ‘" + dm_keyword(c) + "’을 보내주세요.\n팔로우하지 않아도 DM으로 예약 링크를 보내드립니다."
+                caption += "\n\n💌 예약 링크가 필요하면 이 게시물 댓글에 ‘" + dm_keyword(c) + "’를 남겨주세요.\n팔로우하지 않아도 DM으로 예약 링크를 보내드립니다."
                 if len(caption)>2100:
                     raise ValueError("Caption too long")
                 self.z("/posts/"+post_id,"PUT",{"isDraft":True,"content":caption})
@@ -116,17 +116,7 @@ class CandidateBot(Bot):
                 self.save(ledger, phase="needs_review")
                 raise
             return
-        result = super().check(ledger)
-        state = ledger.get("metadata", {}).get(TAG, {})
-        if state.get("phase") == "published" and state.get("dmAutomationId") and not state.get("dmInboxEnabled"):
-            listing = self.z("/comment-automations")
-            for automation in listing.get("automations", []):
-                aid = automation.get("id", automation.get("_id"))
-                if aid != state["dmAutomationId"] and automation.get("accountId") == self.env["INSTAGRAM_ACCOUNT_ID"] and automation.get("name", "").startswith("예약 링크 DM ·") and automation.get("alsoMatchInDms"):
-                    self.z("/comment-automations/"+aid, "PATCH", {"alsoMatchInDms":False})
-            self.z("/comment-automations/"+state["dmAutomationId"], "PATCH", {"alsoMatchInDms":True})
-            self.save(ledger, dmInboxEnabled=True)
-        return result
+        return super().check(ledger)
 
     def messages(self):
         query = urllib.parse.urlencode({"accountId": self.env["TELEGRAM_ACCOUNT_ID"], "limit": 100, "sortOrder": "desc"})
