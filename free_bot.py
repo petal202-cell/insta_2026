@@ -84,13 +84,16 @@ class Bot:
         if post.get('status') != 'published':
             raise RuntimeError('Telegram delivery not confirmed; preview remains unapprovable')
 
-    def gemini(self, prompt, search=False):
+    def gemini(self, prompt, search=False, schema=None):
         import urllib.request
         import urllib.error
         body = {'contents': [{'parts': [{'text': prompt}]}],
-                'generationConfig': {'maxOutputTokens': 10000}}
+                'generationConfig': {'maxOutputTokens': 8192,
+                                     'thinkingConfig': {'thinkingBudget': 0}}}
         if search:
             body['tools'] = [{'google_search': {}}]
+        if schema is not None:
+            body['generationConfig'].update(responseMimeType='application/json', responseJsonSchema=schema)
         req = urllib.request.Request(
             'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
             data=json.dumps(body).encode(), method='POST',
@@ -110,6 +113,10 @@ class Bot:
                     raise GeminiTransientError('Gemini connection failed; retries exhausted') from None
             time.sleep(5 * (attempt + 1))
         candidate = data.get('candidates', [{}])[0]
+        print('Gemini response:', {'finishReason': candidate.get('finishReason'),
+              'search': search, 'structured': schema is not None}, flush=True)
+        if candidate.get('finishReason') == 'MAX_TOKENS':
+            raise RuntimeError('Gemini output was truncated; no partial draft accepted')
         if search and not candidate.get('groundingMetadata', {}).get('groundingChunks'):
             raise RuntimeError('Search sources missing')
         return ''.join(p.get('text', '') for p in candidate.get('content', {}).get('parts', []) if not p.get('thought'))
@@ -126,7 +133,8 @@ class Bot:
             # Manual recovery is limited to a failed pre-draft day; it never republishes.
             if recover:
                 eligible = state.get('phase') in ('error', 'retry_wait')
-            if not eligible or state.get('postId') or state.get('uncertainMutation') or state.get('attempts', 1) >= 3:
+            limit = 4 if recover else 3
+            if not eligible or state.get('postId') or state.get('uncertainMutation') or state.get('attempts', 1) >= limit:
                 return
             self.save(ledger, phase='building', attempts=state.get('attempts', 1)+1,
                       manualRecoveryUsed=recover or state.get('manualRecoveryUsed', False))
@@ -148,6 +156,16 @@ class Bot:
             raise
 
     def complete_draft(self, draft):
+        schema = {'type': 'object', 'properties': {
+            'available': {'type': 'boolean'},
+            **{k: {'type': 'string'} for k in ('event', 'eventEnd', 'dates', 'place')},
+            'caption': {'type': 'string', 'minLength': 500, 'maxLength': 2100},
+            'activities': {'type': 'array', 'minItems': 2, 'maxItems': 3,
+                           'items': {'type': 'string', 'maxLength': 32}},
+            'sources': {'type': 'array', 'minItems': 1, 'items': {'type': 'object',
+                'properties': {'url': {'type': 'string'}, 'title': {'type': 'string'}},
+                'required': ['url', 'title']}}},
+            'required': ['available', 'event', 'eventEnd', 'dates', 'place', 'caption', 'activities', 'sources']}
         def valid(d):
             return (isinstance(d.get('caption'), str) and 500 <= len(d['caption']) <= 2100
                     and isinstance(d.get('activities'), list) and 2 <= len(d['activities']) <= 3
@@ -161,7 +179,7 @@ class Bot:
                   'activities': len(draft.get('activities', [])), 'formatAttempt': attempt}, flush=True)
             if attempt == 2:
                 break
-            draft = parse_json(self.gemini('다음 조사 결과의 확인된 사실과 출처만 사용해 인스타그램 초안을 보완하라. 새 행사·체험·요금·시설 등을 지어내지 말 것. 한국어 본문은 반드시 700~1200자. 확인된 즐길거리의 설명·가족 방문 팁과 미확인 사항 확인 안내로 분량을 채우고 같은 문장을 반복하지 말 것. JSON만 반환: available=true, event, eventEnd(YYYY-MM-DD), dates, place, activities(문자열 배열 정확히 2~3개, 각 1~32자), caption(문자열), sources([{url,title}]). dates와 place를 빠뜨리지 말 것. 출처 URL과 날짜는 기존 값을 유지.\n' + json.dumps(draft, ensure_ascii=False)))
+            draft = parse_json(self.gemini('다음 조사 결과의 확인된 사실과 출처만 사용해 인스타그램 초안을 보완하라. 새 행사·체험·요금·시설 등을 지어내지 말 것. 한국어 본문은 반드시 700~1200자. 확인된 즐길거리의 설명·가족 방문 팁과 미확인 사항 확인 안내로 분량을 채우고 같은 문장을 반복하지 말 것. JSON만 반환: available=true, event, eventEnd(YYYY-MM-DD), dates, place, activities(문자열 배열 정확히 2~3개, 각 1~32자), caption(문자열), sources([{url,title}]). dates와 place를 빠뜨리지 말 것. 출처 URL과 날짜는 기존 값을 유지.\n' + json.dumps(draft, ensure_ascii=False), schema=schema))
         raise RuntimeError('Draft format incomplete after bounded repair')
 
     def build(self, ledger, now):
