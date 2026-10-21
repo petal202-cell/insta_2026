@@ -10,6 +10,10 @@ from worker import KST, fingerprint, parse_json, request
 TAG = 'family-weekend-free-v1'
 
 
+class GeminiTransientError(RuntimeError):
+    pass
+
+
 def approval(message, state, sender):
     if state.get('phase') != 'pending' or not state.get('previewAt'):
         return None
@@ -91,30 +95,56 @@ class Bot:
             'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
             data=json.dumps(body).encode(), method='POST',
             headers={'x-goog-api-key': self.env['GEMINI_API_KEY'], 'Content-Type': 'application/json'})
-        try:
-            with urllib.request.urlopen(req, timeout=150) as res:
-                data = json.load(res)
-        except urllib.error.HTTPError as err:
-            raise RuntimeError(f'Gemini HTTP {err.code}; no paid fallback') from None
-        except urllib.error.URLError:
-            raise RuntimeError('Gemini connection failed') from None
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(req, timeout=150) as res:
+                    data = json.load(res)
+                break
+            except urllib.error.HTTPError as err:
+                if err.code not in (500, 502, 503, 504):
+                    raise RuntimeError(f'Gemini HTTP {err.code}; no paid fallback') from None
+                if attempt == 2:
+                    raise GeminiTransientError(f'Gemini HTTP {err.code}; retries exhausted') from None
+            except (urllib.error.URLError, TimeoutError):
+                if attempt == 2:
+                    raise GeminiTransientError('Gemini connection failed; retries exhausted') from None
+            time.sleep(5 * (attempt + 1))
         candidate = data.get('candidates', [{}])[0]
         if search and not candidate.get('groundingMetadata', {}).get('groundingChunks'):
             raise RuntimeError('Search sources missing')
         return ''.join(p.get('text', '') for p in candidate.get('content', {}).get('parts', []) if not p.get('thought'))
 
-    def make_daily(self, now, ledgers):
+    def make_daily(self, now, ledgers, recover=False):
         day = now.date().isoformat()
-        if not 7 <= now.hour < 10 or any(p.get('metadata', {}).get(TAG, {}).get('day') == day for p in ledgers):
-            return
-        ledger = self.z('/posts', 'POST', {'isDraft': True, 'tags': [TAG],
-            'content': f'자동화 상태 기록 {day} — 게시 대상 아님',
-            'metadata': {TAG: {'day': day, 'phase': 'building'}}})['post']
+        records = [p for p in ledgers if p.get('metadata', {}).get(TAG, {}).get('day') == day]
+        if records:
+            if len(records) != 1:
+                raise RuntimeError('Multiple daily ledgers require review')
+            ledger = records[0]
+            state = ledger['metadata'][TAG]
+            eligible = state.get('phase') == 'retry_wait' and time.time() >= state.get('retryAt', 0)
+            # Manual recovery is limited to a failed pre-draft day; it never republishes.
+            if recover:
+                eligible = state.get('phase') in ('error', 'retry_wait') and not state.get('manualRecoveryUsed')
+            if not eligible or state.get('postId') or state.get('uncertainMutation') or state.get('attempts', 1) >= 3:
+                return
+            self.save(ledger, phase='building', attempts=state.get('attempts', 1)+1,
+                      manualRecoveryUsed=recover or state.get('manualRecoveryUsed', False))
+        else:
+            if recover or not 7 <= now.hour < 12:
+                return
+            ledger = self.z('/posts', 'POST', {'isDraft': True, 'tags': [TAG],
+                'content': f'자동화 상태 기록 {day} — 게시 대상 아님',
+                'metadata': {TAG: {'day': day, 'phase': 'building', 'attempts': 1}}})['post']
         try:
             self.build(ledger, now)
         except Exception as err:
-            self.save(ledger, phase='error', error=type(err).__name__)
-            self.telegram('⚠️ 오늘 초안 준비가 중단됐어요. 무료 한도·연결·자료 검증을 확인해주세요. 유료 API로 전환하거나 자동 게시하지 않습니다.')
+            state = ledger.get('metadata', {}).get(TAG, {})
+            uncertain = state.get('phase') == 'creating_draft' and not state.get('postId')
+            retry = isinstance(err, GeminiTransientError) and state.get('phase') == 'building' and state.get('attempts', 1) < 3
+            self.save(ledger, phase='retry_wait' if retry else 'error', error=type(err).__name__,
+                      retryAt=time.time()+15*60, uncertainMutation=uncertain)
+            self.telegram(f'⚠️ {day} 초안 준비가 중단됐어요. ' + ('Gemini 일시 오류로 다음 예약 실행에서 다시 시도할게요.' if retry else '무료 한도·연결·자료 검증을 확인해야 해요.') + ' 유료 API로 전환하거나 자동 게시하지 않습니다.')
             raise
 
     def build(self, ledger, now):
@@ -279,11 +309,11 @@ JSON만 반환: available, event, eventEnd(YYYY-MM-DD), dates, place, activities
         ledgers = self.ledgers()
         for ledger in ledgers:
             self.check(ledger)
-        if mode == 'daily':
-            self.make_daily(dt.datetime.now(KST), ledgers)
+        if mode in ('daily', 'recover'):
+            self.make_daily(dt.datetime.now(KST), ledgers, recover=mode == 'recover')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', choices=['daily', 'poll', 'check'])
+    parser.add_argument('mode', choices=['daily', 'poll', 'check', 'recover'])
     Bot().run(parser.parse_args().mode)
