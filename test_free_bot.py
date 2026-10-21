@@ -190,3 +190,16 @@ class FreeBotTests(unittest.TestCase):
             with patch.object(self.bot, 'build') as build:
                 self.bot.make_daily(now, [ledger], recover=True)
                 build.assert_not_called()
+
+    def test_format_repair_retains_checks_and_uses_bounded_calls(self):
+        import json
+        good = {'event': '공식 행사', 'eventEnd': '2026-10-25', 'dates': '10.24~10.25',
+                'place': '서울', 'caption': '확인된 내용 ' * 100, 'activities': ['체험', '공연'],
+                'sources': [{'url': 'https://example.go.kr'}]}
+        with patch.object(self.bot, 'gemini', return_value=json.dumps(good)) as gen:
+            self.assertEqual(self.bot.complete_draft({'caption': '짧음'}), good)
+            gen.assert_called_once()
+        with patch.object(self.bot, 'gemini', return_value='{}') as gen:
+            with self.assertRaises(RuntimeError):
+                self.bot.complete_draft({})
+            self.assertEqual(gen.call_count, 2)
