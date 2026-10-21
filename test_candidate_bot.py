@@ -66,9 +66,29 @@ class RevisionTests(unittest.TestCase):
         self.assertEqual(len(sent),3)
         state=ledger["metadata"][TAG]
         self.assertEqual(state["phase"],"pending")
-        self.assertIn(candidate["booking_url"],remote["content"])
+        self.assertNotIn(candidate["booking_url"],remote["content"])
+        self.assertIn("팔로우하지 않아도",remote["content"])
+        self.assertIn("DM으로",remote["content"])
         old={"direction":"incoming","senderId":"42","message":"승인 p","createdAt":message["createdAt"]}
         self.assertIsNone(approval(old,state,"42"))
+
+    def test_dm_setup_has_no_follow_gate_and_is_once(self):
+        bot=CandidateBot({"INSTAGRAM_ACCOUNT_ID":"ig"})
+        ledger={"_id":"l","metadata":{TAG:{"postId":"draft"}}}
+        calls=[]
+        def api(path,method="GET",body=None):
+            if path=="/comment-automations":
+                calls.append(body)
+                return {"automation":{"id":"auto"}}
+            return {}
+        bot.z=api
+        candidate={"id":"S123456","title":"체험","booking_url":"https://example.go.kr/book","registration_start":"2026-12-01"}
+        bot.ensure_dm(ledger,candidate)
+        bot.ensure_dm(ledger,candidate)
+        self.assertEqual(len(calls),1)
+        self.assertTrue(calls[0]["alsoMatchInDms"])
+        self.assertEqual(calls[0]["audience"]["followerStatus"],"any")
+        self.assertIn(candidate["booking_url"],calls[0]["dmMessage"])
 
     def test_model_failure_keeps_approval_revoked(self):
         remote={"_id":"p","status":"draft","content":"old"}
