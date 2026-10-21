@@ -135,14 +135,15 @@ class Bot:
             # Manual recovery is limited to a failed pre-draft day; it never republishes.
             if recover:
                 eligible = state.get('phase') in ('error', 'retry_wait')
-            if verify and state.get('liveVerificationUsed'):
+            if verify and state.get('verificationVersion') == 'research-schema-v2':
                 return
-            limit = 5 if verify else (4 if recover else 3)
+            limit = 6 if verify else (4 if recover else 3)
             if not eligible or state.get('postId') or state.get('uncertainMutation') or state.get('attempts', 1) >= limit:
                 return
             self.save(ledger, phase='building', attempts=state.get('attempts', 1)+1,
                       manualRecoveryUsed=recover or state.get('manualRecoveryUsed', False),
-                      liveVerificationUsed=verify or state.get('liveVerificationUsed', False))
+                      liveVerificationUsed=verify or state.get('liveVerificationUsed', False),
+                      verificationVersion='research-schema-v2' if verify else state.get('verificationVersion'))
         else:
             if recover or not 7 <= now.hour < 12:
                 return
@@ -228,6 +229,17 @@ class Bot:
         print('Official page review:', {'pages': len(pages), 'evidenceKinds': sorted(kinds), 'ok': valid}, flush=True)
         return valid
 
+    def research_draft(self, prompt):
+        notes = self.gemini(prompt, search=True)
+        try:
+            result = parse_json(notes)
+            if not isinstance(result, dict):
+                raise ValueError('Research result is not an object')
+            return result
+        except (json.JSONDecodeError, ValueError):
+            print('Research requires structured extraction:', {'characters': len(notes)}, flush=True)
+            return self.complete_draft({'research_notes': notes})
+
     def build(self, ledger, now):
         sat = now.date() + dt.timedelta(days=(5 - now.weekday()) % 7)
         sun = sat + dt.timedelta(days=1)
@@ -239,7 +251,7 @@ class Bot:
 JSON만 반환: available, event, eventEnd(YYYY-MM-DD), dates(실제 행사 일정), place, activities(2~3개 각 32자 이내), caption(한국어 700~1500자), sources([{{url,title}}]).
 caption은 어린이 체험·놀이·공연의 구체적인 내용, 비용·예약·추천 연령 중심. 주차·유모차·준비물·추천동선은 확인된 경우만. 공식 연령 제한과 편집 추천을 구분. 확인 안 된 사항은 단정하지 말 것.
 일정·장소·운영시간·변경 안내·공식 출처 URL·저장 공유 안내·해시태그 5개 포함. 이미지는 사진이 없는 디자인 정보 카드라고 안내. 실제 사진이나 AI 일러스트로 제시하지 말 것.'''
-        draft = parse_json(self.gemini(prompt, search=True))
+        draft = self.research_draft(prompt)
         if not draft.get('available'):
             self.save(ledger, phase='no_event')
             self.telegram('이번 주말 아이들과 즐길 서울·경기 축제를 공식 자료로 충분히 확인하지 못했어요. 오늘은 초안을 만들지 않습니다.')
@@ -296,7 +308,7 @@ JSON만 반환: available, event, eventEnd(YYYY-MM-DD), dates, place, activities
 본문에 공식 출처 URL, 해시태그, 사진이 아닌 디자인 정보 카드 안내를 포함. 공식 근거가 부족하면 {{"available":false}}.
 기존 초안: {json.dumps(old, ensure_ascii=False)}
 사용자 수정 요청: {json.dumps(instructions, ensure_ascii=False)}'''
-            draft = parse_json(self.gemini(prompt, search=True))
+            draft = self.research_draft(prompt)
             if not draft.get('available') or not 100 <= len(draft['caption']) <= 2100:
                 raise RuntimeError('Revision content validation failed')
             if not 2 <= len(draft['activities']) <= 3 or not draft.get('sources'):
