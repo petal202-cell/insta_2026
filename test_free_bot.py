@@ -3,7 +3,7 @@ import datetime as dt
 import time
 import unittest
 from unittest.mock import patch
-from free_bot import Bot, TAG, approval, revision_request
+from free_bot import Bot, TAG, approval, revision_request, GeminiTransientError
 from worker import fingerprint
 
 
@@ -142,3 +142,51 @@ class FreeBotTests(unittest.TestCase):
         self.message['message'] = '승인 post'
         self.bot.check(self.ledger)
         self.assertEqual(len(updates), 1)
+
+    def test_transient_gemini_failure_is_retried_without_paid_fallback(self):
+        import io
+        import urllib.error
+        response = b'{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}'
+        self.bot.env['GEMINI_API_KEY'] = 'test-only'
+        with patch('urllib.request.urlopen', side_effect=[
+            urllib.error.HTTPError('https://example', 503, 'busy', {}, None), io.BytesIO(response)
+        ]) as call, patch('free_bot.time.sleep'):
+            self.assertEqual(self.bot.gemini('test'), 'ok')
+            self.assertEqual(call.call_count, 2)
+        with patch('urllib.request.urlopen', side_effect=urllib.error.HTTPError('https://example', 503, 'busy', {}, None)) as call, patch('free_bot.time.sleep'):
+            with self.assertRaises(GeminiTransientError):
+                self.bot.gemini('test')
+            self.assertEqual(call.call_count, 3)
+
+    def test_quota_failure_not_retried(self):
+        import urllib.error
+        self.bot.env['GEMINI_API_KEY'] = 'test-only'
+        with patch('urllib.request.urlopen', side_effect=urllib.error.HTTPError('https://example', 429, 'quota', {}, None)) as call:
+            with self.assertRaises(RuntimeError):
+                self.bot.gemini('test')
+            self.assertEqual(call.call_count, 1)
+
+    def test_daily_transient_retries_reuse_ledger_and_stop_at_limit(self):
+        now = dt.datetime(2026, 10, 21, 9, 7)
+        ledger = {'_id': 'ledger', 'metadata': {TAG: {'day': '2026-10-21', 'phase': 'retry_wait', 'retryAt': 0, 'attempts': 1}}}
+        def fail(*args):
+            raise GeminiTransientError('503')
+        self.bot.build = fail
+        with self.assertRaises(GeminiTransientError):
+            self.bot.make_daily(now, [ledger])
+        self.assertEqual(ledger['metadata'][TAG]['phase'], 'retry_wait')
+        self.assertEqual(ledger['metadata'][TAG]['attempts'], 2)
+        ledger['metadata'][TAG]['retryAt'] = 0
+        with self.assertRaises(GeminiTransientError):
+            self.bot.make_daily(now, [ledger])
+        self.assertEqual(ledger['metadata'][TAG]['phase'], 'error')
+        self.assertEqual(ledger['metadata'][TAG]['attempts'], 3)
+        self.bot.make_daily(now, [ledger])
+
+    def test_recovery_never_retries_ambiguous_or_created_draft(self):
+        now = dt.datetime(2026, 10, 21, 19, 0)
+        for extra in ({'postId': 'exists'}, {'uncertainMutation': True}):
+            ledger = {'_id': 'ledger', 'metadata': {TAG: {'day': '2026-10-21', 'phase': 'error', **extra}}}
+            with patch.object(self.bot, 'build') as build:
+                self.bot.make_daily(now, [ledger], recover=True)
+                build.assert_not_called()
