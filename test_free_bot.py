@@ -20,7 +20,7 @@ class FreeBotTests(unittest.TestCase):
         self.message = {'id': 'reply', 'senderId': '42', 'direction': 'incoming',
                         'message': '승인 post', 'createdAt': dt.datetime.now(dt.timezone.utc).isoformat()}
         self.publish = []
-        self.fail = False
+        self.fail_publish = False
         self.bot.telegram = lambda *args: None
         def api(path, method='GET', body=None):
             if path.startswith('/inbox/'):
@@ -30,7 +30,7 @@ class FreeBotTests(unittest.TestCase):
             if method == 'PUT':
                 self.assertEqual(self.ledger['metadata'][TAG]['phase'], 'publishing')
                 self.publish.append(body)
-                if self.fail:
+                if self.fail_publish:
                     raise TimeoutError('uncertain')
                 self.remote['status'] = 'publishing'
                 return {'post': self.remote}
@@ -52,7 +52,7 @@ class FreeBotTests(unittest.TestCase):
         self.assertEqual(self.ledger['metadata'][TAG]['phase'], 'published')
 
     def test_uncertain_result_not_retried_after_restart(self):
-        self.fail = True
+        self.fail_publish = True
         with self.assertRaises(TimeoutError):
             self.bot.check(self.ledger)
         self.bot.check(copy.deepcopy(self.ledger))
@@ -222,8 +222,9 @@ class FreeBotTests(unittest.TestCase):
 
     def test_malformed_research_uses_structured_extraction(self):
         notes = '{"available": true, "caption": "unterminated'
-        with patch.object(self.bot, 'gemini', return_value=notes), patch.object(self.bot, 'complete_draft', return_value={'available': True}) as repair:
-            self.assertEqual(self.bot.research_draft('research'), {'available': True})
+        result = {'available': True, 'sources': [{'url': 'https://example.go.kr/event'}]}
+        with patch.object(self.bot, 'gemini', return_value=notes), patch.object(self.bot, 'complete_draft', return_value=result) as repair:
+            self.assertEqual(self.bot.research_draft('research'), result)
             repair.assert_called_once_with({'research_notes': notes})
         with patch.object(self.bot, 'gemini', return_value='{"available":false}'), patch.object(self.bot, 'complete_draft') as repair:
             self.assertEqual(self.bot.research_draft('research'), {'available': False})
