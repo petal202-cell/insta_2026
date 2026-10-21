@@ -135,15 +135,15 @@ class Bot:
             # Manual recovery is limited to a failed pre-draft day; it never republishes.
             if recover:
                 eligible = state.get('phase') in ('error', 'retry_wait')
-            if verify and state.get('verificationVersion') == 'research-schema-v2':
+            if verify and state.get('verificationVersion') == 'official-discovery-v3':
                 return
-            limit = 6 if verify else (4 if recover else 3)
+            limit = 7 if verify else (4 if recover else 3)
             if not eligible or state.get('postId') or state.get('uncertainMutation') or state.get('attempts', 1) >= limit:
                 return
             self.save(ledger, phase='building', attempts=state.get('attempts', 1)+1,
                       manualRecoveryUsed=recover or state.get('manualRecoveryUsed', False),
                       liveVerificationUsed=verify or state.get('liveVerificationUsed', False),
-                      verificationVersion='research-schema-v2' if verify else state.get('verificationVersion'))
+                      verificationVersion='official-discovery-v3' if verify else state.get('verificationVersion'))
         else:
             if recover or not 7 <= now.hour < 12:
                 return
@@ -193,7 +193,7 @@ class Bot:
         for source in draft.get('sources', [])[:5]:
             url = source.get('url', '')
             host = (urllib.parse.urlsplit(url).hostname or '').lower()
-            official = host.endswith('.go.kr') or host in ('visitseoul.net', 'www.visitseoul.net', 'ggtour.or.kr', 'www.ggtour.or.kr')
+            official = host.endswith('.go.kr') or host in ('visitseoul.net', 'www.visitseoul.net', 'ggtour.or.kr', 'www.ggtour.or.kr', 'korean.visitkorea.or.kr')
             if not url.startswith('https://') or not official:
                 continue
             try:
@@ -230,15 +230,27 @@ class Bot:
         return valid
 
     def research_draft(self, prompt):
-        notes = self.gemini(prompt, search=True)
-        try:
-            result = parse_json(notes)
-            if not isinstance(result, dict):
-                raise ValueError('Research result is not an object')
-            return result
-        except (json.JSONDecodeError, ValueError):
-            print('Research requires structured extraction:', {'characters': len(notes)}, flush=True)
-            return self.complete_draft({'research_notes': notes})
+        prompt += '\n출처는 반드시 실제 행사 상세 안내를 담은 go.kr 또는 visitseoul.net, ggtour.or.kr, korean.visitkorea.or.kr 공식 페이지를 포함. 뉴스·블로그만 있으면 추천 불가. site:go.kr 검색을 사용하고 자료가 없으면 available=false.'
+        if self.env.get('VERIFICATION_SOURCE_HINT'):
+            prompt += '\n실제 실행 확인용 공식 자료 후보(일정·프로그램을 직접 확인할 것): ' + self.env['VERIFICATION_SOURCE_HINT']
+        for attempt in range(2):
+            notes = self.gemini(prompt, search=True)
+            try:
+                result = parse_json(notes)
+                if not isinstance(result, dict):
+                    raise ValueError('Research result is not an object')
+            except (json.JSONDecodeError, ValueError):
+                print('Research requires structured extraction:', {'characters': len(notes)}, flush=True)
+                result = self.complete_draft({'research_notes': notes})
+            if not result.get('available'):
+                return result
+            if any((urllib.parse.urlsplit(s.get('url', '')).hostname or '').lower().endswith('.go.kr') or
+                   (urllib.parse.urlsplit(s.get('url', '')).hostname or '').lower() in
+                   ('visitseoul.net', 'www.visitseoul.net', 'ggtour.or.kr', 'www.ggtour.or.kr', 'korean.visitkorea.or.kr')
+                   for s in result.get('sources', [])):
+                return result
+            prompt += '\n이전 후보는 공식 출처가 없었음. 공식 상세 안내가 있는 다른 행사로 다시 검색하라. 없으면 available=false.'
+        return {'available': False}
 
     def build(self, ledger, now):
         sat = now.date() + dt.timedelta(days=(5 - now.weekday()) % 7)
