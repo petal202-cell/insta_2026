@@ -219,3 +219,12 @@ class FreeBotTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.bot.review_draft({'sources': [{'url': 'https://untrusted.example/event'}]}, 'weekend')
             fetch.assert_not_called()
+
+    def test_malformed_research_uses_structured_extraction(self):
+        notes = '{"available": true, "caption": "unterminated'
+        with patch.object(self.bot, 'gemini', return_value=notes), patch.object(self.bot, 'complete_draft', return_value={'available': True}) as repair:
+            self.assertEqual(self.bot.research_draft('research'), {'available': True})
+            repair.assert_called_once_with({'research_notes': notes})
+        with patch.object(self.bot, 'gemini', return_value='{"available":false}'), patch.object(self.bot, 'complete_draft') as repair:
+            self.assertEqual(self.bot.research_draft('research'), {'available': False})
+            repair.assert_not_called()
