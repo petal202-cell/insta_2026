@@ -1,7 +1,10 @@
 import datetime as dt
 import unittest
+import time
+import copy
+import json
 from candidate_bot import selection, make_draft, CandidateBot, FLOW, TAG
-from worker import KST
+from worker import KST, fingerprint
 from unittest.mock import patch
 
 class CandidateTests(unittest.TestCase):
@@ -29,6 +32,53 @@ class CandidateTests(unittest.TestCase):
         with patch.object(bot,"check") as check:
             bot.run("poll")
             check.assert_not_called()
+
+class RevisionTests(unittest.TestCase):
+    def test_revision_replaces_existing_draft_and_revokes_old_approval(self):
+        from free_bot import approval
+        candidate = {"title":"숲 체험","audience":"초등 1~3학년","place":"서울","fee_label":"무료",
+                     "grade_status":"explicit_match","registration_start":"2026-12-01T10:00:00+09:00",
+                     "booking_url":"https://example.go.kr/booking","checked_at":"2026-10-21"}
+        remote = {"_id":"p","status":"draft","content":"old","platforms":[{"platform":"instagram","accountId":"ig"}],
+                  "mediaItems":[{"type":"image","url":"https://example.go.kr/old.png"}]}
+        ledger = {"_id":"ledger","metadata":{TAG:{"phase":"pending","postId":"p","choices":[candidate],
+                  "selectedIndex":0,"digest":fingerprint(remote),"previewAt":time.time()-100,
+                  "expiresAt":time.time()+1000}}}
+        bot=CandidateBot({})
+        sent=[]; updates=[]
+        bot.telegram=lambda *a:sent.append(a)
+        def api(path, method="GET", body=None):
+            if path=="/media/presign":
+                return {"uploadUrl":"https://example.go.kr/upload","publicUrl":"https://example.go.kr/new.png"}
+            if path=="/posts/p" and method=="PUT":
+                self.assertEqual(ledger["metadata"][TAG]["phase"],"revising")
+                self.assertNotIn("publishNow",body)
+                remote.update(content=body["content"],mediaItems=body["mediaItems"])
+                updates.append(body)
+            return {"post":remote}
+        bot.z=api
+        message={"id":"m","createdAt":dt.datetime.now(dt.timezone.utc).isoformat()}
+        responses=iter([json.dumps({"opening":"아이와 함께 준비해요","summary":"공식 페이지에서 세부 활동을 확인해주세요.","activities":["초등 1~3학년","참가비 무료"]}), '{"ok":true}'])
+        bot.gemini=lambda *a,**kw:next(responses)
+        with patch("candidate_bot.request"), patch("card.render_card",return_value=b"png"):
+            bot.revise(ledger,message,"더 친근하게")
+        self.assertEqual(len(updates),1)
+        self.assertEqual(len(sent),3)
+        state=ledger["metadata"][TAG]
+        self.assertEqual(state["phase"],"pending")
+        self.assertIn(candidate["booking_url"],remote["content"])
+        old={"direction":"incoming","senderId":"42","message":"승인 p","createdAt":message["createdAt"]}
+        self.assertIsNone(approval(old,state,"42"))
+
+    def test_model_failure_keeps_approval_revoked(self):
+        remote={"_id":"p","status":"draft","content":"old"}
+        ledger={"_id":"l","metadata":{TAG:{"postId":"p","phase":"pending","digest":fingerprint(remote),"choices":[{}],"selectedIndex":0}}}
+        bot=CandidateBot({})
+        bot.z=lambda *a,**kw:{"post":remote}
+        bot.telegram=lambda *a:None
+        bot.gemini=lambda *a,**kw:(_ for _ in ()).throw(RuntimeError("quota"))
+        bot.revise(ledger,{"id":"m","createdAt":dt.datetime.now(dt.timezone.utc).isoformat()},"수정")
+        self.assertEqual(ledger["metadata"][TAG]["phase"],"revision_failed")
 
 if __name__=="__main__":
     unittest.main()
