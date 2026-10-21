@@ -27,6 +27,9 @@ def selection(message, state, owner):
     except (KeyError, ValueError, TypeError):
         return None
 
+def dm_keyword(candidate):
+    return "예약" + str(candidate.get("id", "체험"))[-6:]
+
 def make_draft(candidate):
     # Deterministic copy of the official API fields; no invented sessions or activities.
     c = candidate
@@ -44,7 +47,8 @@ def make_draft(candidate):
         "", "⚠️ 운영기간은 개별 수업 날짜와 다를 수 있습니다. 토·일 회차, 대상 학년, 보호자 동반, 실제 금액과 예약 조건은 공식 페이지에서 확인해주세요.",
         "접수 시작 안내이며 잔여석이나 예약 성공을 보장하지 않습니다.",
         "대상 확인: " + ("초등 저학년과 겹치는 대상이 명시돼 있습니다." if c["grade_status"] == "explicit_match" else "초1~3 참여 가능 여부를 추가 확인해야 합니다."),
-        "", "🔗 공식 예약 안내", c["booking_url"],
+        "", "💌 예약 링크가 필요하면 DM으로 ‘" + dm_keyword(c) + "’을 보내주세요.",
+        "팔로우하지 않아도 DM으로 예약 링크를 보내드립니다.",
         "", "다음 체험 소식도 보고 싶다면 @sglide_h를 팔로우해주세요 🌿",
         "출처: 서울특별시 공공서비스예약 · " + c["checked_at"][:10],
         "이미지: 직접 제작한 정보 카드", "#초등체험 #초등저학년 #박물관교육 #서울아이와가볼만한곳"
@@ -59,6 +63,61 @@ def make_draft(candidate):
             "caption": caption}
 
 class CandidateBot(Bot):
+    def ensure_dm(self, ledger, candidate):
+        state = ledger["metadata"][TAG]
+        if state.get("dmAutomationId"):
+            return
+        if state.get("dmSetupAttempted"):
+            raise RuntimeError("Uncertain DM setup requires review")
+        self.save(ledger, dmSetupAttempted=True)
+        result = self.z("/comment-automations", "POST", {
+            "profileId": self.env.get("PROFILE_ID", "6ad60bcf329486f425ecae12"),
+            "accountId": self.env["INSTAGRAM_ACCOUNT_ID"],
+            "postId": state["postId"],
+            "name": "예약 링크 DM · " + candidate["title"][:60],
+            "keywords": [dm_keyword(candidate)], "matchMode":"contains",
+            "alsoMatchInDms":True, "linkTracking":False,
+            "audience":{"followerStatus":"any","whenUnknown":"send"},
+            "repeatPolicy":{"mode":"once"}, "dmDelaySeconds":0,
+            "dmMessage": ("💌 " + candidate["title"] + "\n공식 예약 링크:\n" + candidate["booking_url"]
+                + "\n\n접수 시작: " + candidate["registration_start"]
+                + "\n접수 종료: " + str(candidate.get("registration_end") or "공식 안내 확인")
+                + "\n마감된 안내일 수 있으니 회차별 상태를 확인해주세요."
+                + "\n\n팔로우하지 않아도 예약 링크를 받으실 수 있어요. 다음 체험 소식은 @sglide_h에서 확인해주세요 🌿"),
+            "isActive":True})
+        automation = result["automation"]
+        self.save(ledger, dmAutomationId=automation.get("id", automation.get("_id")))
+
+    def check(self, ledger):
+        state = ledger.get("metadata", {}).get(TAG, {})
+        if state.get("flow") == FLOW and state.get("phase") == "pending" and not state.get("dmAutomationId"):
+            post_id = state["postId"]
+            remote = self.z("/posts/"+post_id)["post"]
+            if remote["status"] != "draft" or fingerprint(remote) != state["digest"]:
+                self.save(ledger, phase="needs_review")
+                return
+            self.save(ledger, phase="dm_refresh")
+            try:
+                c = state["choices"][state["selectedIndex"]]
+                self.ensure_dm(ledger, c)
+                caption = remote["content"].replace(c["booking_url"], "").replace("🔗 공식 예약 안내", "")
+                caption += "\n\n💌 예약 링크가 필요하면 DM으로 ‘" + dm_keyword(c) + "’을 보내주세요.\n팔로우하지 않아도 DM으로 예약 링크를 보내드립니다."
+                if len(caption)>2100:
+                    raise ValueError("Caption too long")
+                self.z("/posts/"+post_id,"PUT",{"isDraft":True,"content":caption})
+                post = self.z("/posts/"+post_id)["post"]
+                draft = {**state.get("draftData",{}),"caption":caption}
+                self.save(ledger, phase="previewing", draftData=draft, digest=fingerprint(post))
+                self.telegram("📝 예약 링크를 DM으로 받는 방식으로 바꾼 초안입니다.",post["mediaItems"][0]["url"])
+                self.telegram(caption)
+                self.telegram("새 미리보기 확인 후 승인해주세요:\n승인 "+post_id+"\n\n수정:\n수정 "+post_id+" 요청내용")
+                self.save(ledger, phase="pending", previewAt=time.time())
+            except Exception:
+                self.save(ledger, phase="needs_review")
+                raise
+            return
+        return super().check(ledger)
+
     def messages(self):
         query = urllib.parse.urlencode({"accountId": self.env["TELEGRAM_ACCOUNT_ID"], "limit": 100, "sortOrder": "desc"})
         return self.z("/inbox/conversations/" + self.env["TELEGRAM_CONVERSATION_ID"] + "/messages?" + query).get("messages", [])
@@ -117,6 +176,7 @@ class CandidateBot(Bot):
         post = self.z("/posts/"+post["_id"])["post"]
         if post["status"] != "draft":
             raise RuntimeError("Unexpected draft state")
+        self.ensure_dm(ledger, c)
         self.telegram("📝 채택한 후보 초안 · " + c["title"], post["mediaItems"][0]["url"])
         self.telegram(post["content"])
         self.telegram(f"내용과 신청 조건을 검토한 뒤 게시하려면:\n승인 {post['_id']}\n\n보류:\n보류 {post['_id']}\n\n수정하려면:\n수정 {post['_id']} 요청내용\n\n채택만으로 게시하지 않습니다. 신청 시작 전에 승인이 필요합니다.")
