@@ -30,6 +30,28 @@ def selection(message, state, owner):
 def dm_keyword(candidate):
     return "❤️"
 
+def display_date(value, include_time=True):
+    if not value:
+        return "공식 안내 확인"
+    try:
+        date = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        date = date.replace(tzinfo=KST) if date.tzinfo is None else date.astimezone(KST)
+    except (ValueError, TypeError):
+        return "공식 안내 확인"
+    text = f"{date.year}년 {date.month}월 {date.day}일(" + "월화수목금토일"[date.weekday()] + ")"
+    return text + (f" {date.hour:02d}:{date.minute:02d}" if include_time else "")
+
+def display_period(start, end):
+    if not start or not end:
+        return "공식 안내 확인"
+    try:
+        if dt.datetime.fromisoformat(end.replace("Z", "+00:00")) < dt.datetime.fromisoformat(start.replace("Z", "+00:00")):
+            return "기간 정보 확인 필요"
+    except (ValueError, TypeError):
+        return "기간 정보 확인 필요"
+    a, b = display_date(start, False), display_date(end, False)
+    return a if a == b else a + " ~ " + b
+
 def make_draft(candidate):
     # Deterministic copy of the official API fields; no invented sessions or activities.
     c = candidate
@@ -39,9 +61,10 @@ def make_draft(candidate):
         "👧 대상: " + c["audience"],
         "📍 장소: " + c["place"],
         "💰 비용 안내: " + c["fee_label"],
-        "🗓 접수 시작: " + c["registration_start"],
-        "접수 종료: " + str(c.get("registration_end") or "공식 안내 확인"),
-        "운영기간: " + str(c.get("event_start") or "미확인") + " ~ " + str(c.get("event_end") or "미확인"),
+        "🗓 신청 시작: " + display_date(c["registration_start"]),
+        "신청 마감: " + display_date(c.get("registration_end")),
+        "📅 프로그램 운영기간(API 안내): " + display_period(c.get("event_start"), c.get("event_end")),
+        "개별 체험 날짜·시간: 회차별 예약 화면에서 확인해주세요.",
         "", "어떤 활동인가요?",
         c.get("summary", "구체적인 활동 내용은 공식 예약 페이지를 확인해주세요."),
         "", "⚠️ 운영기간은 개별 수업 날짜와 다를 수 있습니다. 토·일 회차, 대상 학년, 보호자 동반, 실제 금액과 예약 조건은 공식 페이지에서 확인해주세요.",
@@ -57,7 +80,7 @@ def make_draft(candidate):
     if len(caption) > 2100:
         raise ValueError("Caption too long")
     return {"event": c["title"][:45], "headline": "신청 오픈 예정 · 초등 체험 후보",
-            "dates": "접수 시작 " + c["registration_start"][:16].replace("T", " "),
+            "dates": "신청 시작 " + display_date(c["registration_start"]),
             "place": c["place"][:40],
             "activities": [("대상 " + c["audience"])[:30], ("비용 " + c["fee_label"])[:30]],
             "caption": caption}
@@ -80,8 +103,8 @@ class CandidateBot(Bot):
             "audience":{"followerStatus":"any","whenUnknown":"send"},
             "repeatPolicy":{"mode":"once"}, "dmDelaySeconds":0,
             "dmMessage": ("💌 " + candidate["title"] + "\n공식 예약 링크:\n" + candidate["booking_url"]
-                + "\n\n접수 시작: " + candidate["registration_start"]
-                + "\n접수 종료: " + str(candidate.get("registration_end") or "공식 안내 확인")
+                + "\n\n접수 시작: " + display_date(candidate["registration_start"])
+                + "\n접수 종료: " + display_date(candidate.get("registration_end"))
                 + "\n마감된 안내일 수 있으니 회차별 상태를 확인해주세요."
                 + "\n\n팔로우하지 않아도 예약 링크를 받으실 수 있어요. 다음 체험 소식은 @sglide_h에서 확인해주세요 🌿"),
             "isActive":True})
@@ -156,7 +179,7 @@ class CandidateBot(Bot):
             return
         self.telegram("📋 " + day + " · 신청 오픈 예정 후보 " + str(len(choices)) + "곳\n초1~3 대상 여부가 불명확한 후보는 표시했습니다. 채택 후 초안을 만들고, 별도 승인 후 게시합니다.")
         for index, c in enumerate(choices, 1):
-            self.telegram(f"{index}. {c['title']}\n대상: {c['audience']}\n대상 검증: {c['grade_status']}\n장소: {c['place']}\n비용: {c['fee_label']}\n신청 시작: {c['registration_start']}\n운영기간: {c.get('event_start')} ~ {c.get('event_end')}\n{c['booking_url']}\n\n이 후보 채택:\n채택 {batch} {index}")
+            self.telegram(f"{index}. {c['title']}\n대상: {c['audience']}\n대상 검증: {c['grade_status']}\n장소: {c['place']}\n비용: {c['fee_label']}\n신청 시작: {display_date(c['registration_start'])}\n운영기간: {display_period(c.get('event_start'), c.get('event_end'))}\n{c['booking_url']}\n\n이 후보 채택:\n채택 {batch} {index}")
         self.telegram(f"선택 예시: 채택 {batch} 1\n하루 한 후보를 채택할 수 있습니다. 채택은 게시 승인이 아닙니다. 주말 회차·예약 조건은 원문 확인이 필요해요.")
         self.save(ledger, phase="choosing", choicesAt=time.time())
 
