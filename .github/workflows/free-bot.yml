@@ -10,7 +10,7 @@ on:
       mode:
         description: 'check: 연결 테스트 / daily: 초안 생성 / poll: 승인 확인'
         type: choice
-        options: [check, daily, poll]
+        options: [check, daily, poll, recover]
         default: check
 permissions:
   contents: read
