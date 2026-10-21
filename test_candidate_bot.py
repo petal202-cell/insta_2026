@@ -68,7 +68,7 @@ class RevisionTests(unittest.TestCase):
         self.assertEqual(state["phase"],"pending")
         self.assertNotIn(candidate["booking_url"],remote["content"])
         self.assertIn("팔로우하지 않아도",remote["content"])
-        self.assertIn("DM으로",remote["content"])
+        self.assertIn("게시물 댓글에",remote["content"])
         old={"direction":"incoming","senderId":"42","message":"승인 p","createdAt":message["createdAt"]}
         self.assertIsNone(approval(old,state,"42"))
 
