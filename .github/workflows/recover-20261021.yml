@@ -66,3 +66,5 @@ jobs:
 # Start isolated live verification after the code test runs have completed.
 
 # Verify official discovery using actual Seoul government source candidates.
+
+# Verify direct reading of supplied official event pages.
