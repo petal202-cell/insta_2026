@@ -29,7 +29,7 @@ def render_card(draft, font_path):
             y += size + 18
         return y
     draw.rounded_rectangle((72, 65, 1008, 142), radius=34, fill='#E77937')
-    draw.text((110, 77), '이번 주말 · 아이들과 하루 한 곳', font=ImageFont.truetype(font_path, 33), fill='white')
+    draw.text((110, 77), draft.get('headline', '이번 주말 · 아이들과 하루 한 곳'), font=ImageFont.truetype(font_path, 33), fill='white')
     y = block(draft['event'], 69, 192, max_lines=2)
     y = block(draft['dates'], 31, y + 23, '#686F58', 2)
     y = block(draft['place'], 31, y + 8, '#686F58', 2)
