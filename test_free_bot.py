@@ -130,7 +130,7 @@ class FreeBotTests(unittest.TestCase):
             return {'post': self.remote}
         self.bot.z = api
         self.message['message'] = '수정 post 체험을 자세히'
-        with patch('free_bot.request'), patch('card.render_card', return_value=b'png'):
+        with patch('free_bot.request'), patch('card.render_card', return_value=b'png'), patch.object(self.bot, 'review_draft', return_value=True):
             self.bot.check(self.ledger)
         state = self.ledger['metadata'][TAG]
         self.assertEqual(state['phase'], 'pending')
@@ -203,3 +203,19 @@ class FreeBotTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.bot.complete_draft({})
             self.assertEqual(gen.call_count, 2)
+
+    def test_official_review_requires_real_date_and_activity_quotes(self):
+        import json
+        url = 'https://example.go.kr/event'
+        text = '2026년 10월 24일부터 25일까지 어린이 축제를 운영합니다. 어린이 만들기 체험과 가족 공연을 진행합니다. ' * 5
+        evidence = [{'kind': 'date', 'url': url, 'quote': '2026년 10월 24일부터 25일까지 어린이 축제를 운영합니다.'},
+                    {'kind': 'activity', 'url': url, 'quote': '어린이 만들기 체험과 가족 공연을 진행합니다.'}]
+        self.bot.gemini = lambda *a, **kw: json.dumps({'ok': True, 'reason': '확인', 'evidence': evidence})
+        with patch('free_bot.request', return_value=text.encode()):
+            self.assertTrue(self.bot.review_draft({'sources': [{'url': url}]}, '2026-10-24~25'))
+            evidence[1]['quote'] = '공식 본문에 존재하지 않는 근거 문장입니다.'
+            self.assertFalse(self.bot.review_draft({'sources': [{'url': url}]}, '2026-10-24~25'))
+        with patch('free_bot.request') as fetch:
+            with self.assertRaises(RuntimeError):
+                self.bot.review_draft({'sources': [{'url': 'https://untrusted.example/event'}]}, 'weekend')
+            fetch.assert_not_called()
