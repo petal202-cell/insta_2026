@@ -1,7 +1,7 @@
 name: Free family weekend bot
 on:
   push:
-    paths: ['free_bot.py', 'card.py', 'test_free_bot.py', '.github/workflows/free-bot.yml']
+    paths: ['free_bot.py', 'card.py', 'test_free_bot.py', '.github/workflows/free-bot.yml', 'candidate_bot.py', 'test_candidate_bot.py']
   schedule:
     - cron: '7 22 * * *'
     - cron: '11,26,41,56 * * * *'
@@ -10,8 +10,8 @@ on:
       mode:
         description: 'check: 연결 테스트 / daily: 초안 생성 / poll: 승인 확인'
         type: choice
-        options: [check, daily, poll, recover]
-        default: check
+        options: [daily, poll, offer]
+        default: poll
 permissions:
   contents: read
 concurrency:
@@ -37,7 +37,7 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m unittest -v
       - name: Install Korean font
-        if: github.event_name != 'push'
+        if: always()
         run: sudo apt-get update -qq && sudo apt-get install -y fonts-noto-cjk
       - name: Verify free project acknowledgement
         if: github.event_name != 'push'
@@ -48,7 +48,11 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         env:
           BOT_MODE: ${{ inputs.mode }}
-        run: python free_bot.py "$BOT_MODE"
+        run: python candidate_bot.py "$BOT_MODE"
       - name: Scheduled command
         if: github.event_name == 'schedule' && vars.BOT_ENABLED != 'false'
         run: python free_bot.py daily
+
+      - name: Send initial candidate selection after transition
+        if: github.event_name == 'push' && github.event.head_commit.message == 'Switch scheduled bot to candidate selection and approval flow'
+        run: python candidate_bot.py offer
