@@ -56,3 +56,7 @@ jobs:
       - name: Send initial candidate selection after transition
         if: github.event_name == 'push' && github.event.head_commit.message == 'Switch scheduled bot to candidate selection and approval flow'
         run: python candidate_bot.py offer
+
+      - name: Process pending Telegram command on requested manual check
+        if: github.event_name == 'push' && github.event.head_commit.message == 'Process pending Telegram candidate adoption now'
+        run: python candidate_bot.py poll
