@@ -125,7 +125,7 @@ class Bot:
             eligible = state.get('phase') == 'retry_wait' and time.time() >= state.get('retryAt', 0)
             # Manual recovery is limited to a failed pre-draft day; it never republishes.
             if recover:
-                eligible = state.get('phase') in ('error', 'retry_wait') and not state.get('manualRecoveryUsed')
+                eligible = state.get('phase') in ('error', 'retry_wait')
             if not eligible or state.get('postId') or state.get('uncertainMutation') or state.get('attempts', 1) >= 3:
                 return
             self.save(ledger, phase='building', attempts=state.get('attempts', 1)+1,
@@ -144,8 +144,25 @@ class Bot:
             retry = isinstance(err, GeminiTransientError) and state.get('phase') == 'building' and state.get('attempts', 1) < 3
             self.save(ledger, phase='retry_wait' if retry else 'error', error=type(err).__name__,
                       retryAt=time.time()+15*60, uncertainMutation=uncertain)
-            self.telegram(f'⚠️ {day} 초안 준비가 중단됐어요. ' + ('Gemini 일시 오류로 다음 예약 실행에서 다시 시도할게요.' if retry else '무료 한도·연결·자료 검증을 확인해야 해요.') + ' 유료 API로 전환하거나 자동 게시하지 않습니다.')
+            self.telegram(f"⚠️ {day} 초안 준비 {state.get('attempts', 1)}차 시도가 중단됐어요. " + ('Gemini 일시 오류로 다음 예약 실행에서 다시 시도할게요.' if retry else '무료 한도·연결·자료 검증을 확인해야 해요.') + ' 유료 API로 전환하거나 자동 게시하지 않습니다.')
             raise
+
+    def complete_draft(self, draft):
+        def valid(d):
+            return (isinstance(d.get('caption'), str) and 500 <= len(d['caption']) <= 2100
+                    and isinstance(d.get('activities'), list) and 2 <= len(d['activities']) <= 3
+                    and all(isinstance(x, str) and 1 <= len(x) <= 32 for x in d['activities'])
+                    and all(isinstance(d.get(k), str) and d[k] for k in ('event', 'eventEnd', 'dates', 'place'))
+                    and isinstance(d.get('sources'), list) and len(d['sources']) > 0)
+        for attempt in range(3):
+            if valid(draft):
+                return draft
+            print('Draft format check:', {'captionLength': len(str(draft.get('caption', ''))),
+                  'activities': len(draft.get('activities', [])), 'formatAttempt': attempt}, flush=True)
+            if attempt == 2:
+                break
+            draft = parse_json(self.gemini('다음 조사 결과의 확인된 사실과 출처만 사용해 인스타그램 초안을 보완하라. 새 행사·체험·요금·시설 등을 지어내지 말 것. 한국어 본문은 반드시 700~1200자. 확인된 즐길거리의 설명·가족 방문 팁과 미확인 사항 확인 안내로 분량을 채우고 같은 문장을 반복하지 말 것. JSON만 반환: available=true, event, eventEnd(YYYY-MM-DD), dates, place, activities(문자열 배열 정확히 2~3개, 각 1~32자), caption(문자열), sources([{url,title}]). dates와 place를 빠뜨리지 말 것. 출처 URL과 날짜는 기존 값을 유지.\n' + json.dumps(draft, ensure_ascii=False)))
+        raise RuntimeError('Draft format incomplete after bounded repair')
 
     def build(self, ledger, now):
         sat = now.date() + dt.timedelta(days=(5 - now.weekday()) % 7)
@@ -163,8 +180,7 @@ caption은 어린이 체험·놀이·공연의 구체적인 내용, 비용·예�
             self.save(ledger, phase='no_event')
             self.telegram('이번 주말 아이들과 즐길 서울·경기 축제를 공식 자료로 충분히 확인하지 못했어요. 오늘은 초안을 만들지 않습니다.')
             return
-        if not 500 <= len(draft['caption']) <= 2100 or not 2 <= len(draft['activities']) <= 3:
-            raise RuntimeError('Incomplete draft')
+        draft = self.complete_draft(draft)
         if not draft.get('sources') or any(not s['url'].startswith('https://') for s in draft['sources']):
             raise RuntimeError('Sources missing')
         end = dt.datetime.combine(dt.date.fromisoformat(draft['eventEnd']), dt.time(23, 59), KST).timestamp()
