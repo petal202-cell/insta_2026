@@ -119,7 +119,7 @@ class CandidateBot(Bot):
             raise RuntimeError("Unexpected draft state")
         self.telegram("📝 채택한 후보 초안 · " + c["title"], post["mediaItems"][0]["url"])
         self.telegram(post["content"])
-        self.telegram(f"내용과 신청 조건을 검토한 뒤 게시하려면:\n승인 {post['_id']}\n\n보류:\n보류 {post['_id']}\n\n수정하려면:\n수정 {post[\'_id\']} 요청내용\n\n채택만으로 게시하지 않습니다. 신청 시작 전에 승인이 필요합니다.")
+        self.telegram(f"내용과 신청 조건을 검토한 뒤 게시하려면:\n승인 {post['_id']}\n\n보류:\n보류 {post['_id']}\n\n수정하려면:\n수정 {post['_id']} 요청내용\n\n채택만으로 게시하지 않습니다. 신청 시작 전에 승인이 필요합니다.")
         self.save(ledger, phase="pending", digest=fingerprint(post), previewAt=time.time())
 
     def revise(self, ledger, message, instructions):
