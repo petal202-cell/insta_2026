@@ -59,3 +59,5 @@ jobs:
 # Last manual pre-draft recovery: enforce complete structured output.
 
 # One live verification of the corrected official-page evidence path.
+
+# Verify structured extraction of non-JSON grounded research.
