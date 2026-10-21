@@ -62,3 +62,5 @@ jobs:
         run: python candidate_bot.py poll
 
 # Refresh pending previews with keyword DM booking delivery.
+
+# Process received owner approval after scheduler delay.
