@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
+      VERIFICATION_SOURCE_HINT: '2026 서울국제정원박람회 공식 기간과 어린이 관련 내용을 확인: https://www.seoul.go.kr/festa/garden/y2026/citizen-participation/faq?article=41527 https://mediahub.seoul.go.kr/archives/2018050 https://mediahub.seoul.go.kr/archives/2018024'
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
       INSTAGRAM_ACCOUNT_ID: ${{ vars.INSTAGRAM_ACCOUNT_ID || fromJSON(secrets.BOT_CONFIG || '{}').INSTAGRAM_ACCOUNT_ID }}
@@ -63,3 +64,5 @@ jobs:
 # Verify structured extraction of non-JSON grounded research.
 
 # Start isolated live verification after the code test runs have completed.
+
+# Verify official discovery using actual Seoul government source candidates.
