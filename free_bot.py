@@ -135,15 +135,15 @@ class Bot:
             # Manual recovery is limited to a failed pre-draft day; it never republishes.
             if recover:
                 eligible = state.get('phase') in ('error', 'retry_wait')
-            if verify and state.get('verificationVersion') == 'official-discovery-v3':
+            if verify and state.get('verificationVersion') == 'direct-official-v4':
                 return
-            limit = 7 if verify else (4 if recover else 3)
+            limit = 8 if verify else (4 if recover else 3)
             if not eligible or state.get('postId') or state.get('uncertainMutation') or state.get('attempts', 1) >= limit:
                 return
             self.save(ledger, phase='building', attempts=state.get('attempts', 1)+1,
                       manualRecoveryUsed=recover or state.get('manualRecoveryUsed', False),
                       liveVerificationUsed=verify or state.get('liveVerificationUsed', False),
-                      verificationVersion='official-discovery-v3' if verify else state.get('verificationVersion'))
+                      verificationVersion='direct-official-v4' if verify else state.get('verificationVersion'))
         else:
             if recover or not 7 <= now.hour < 12:
                 return
@@ -230,6 +230,22 @@ class Bot:
         return valid
 
     def research_draft(self, prompt):
+        # A supplied verification source is fetched, rather than treated as a search hint.
+        # This exercises the same formatting, fact review, card and delivery path.
+        hint = self.env.get('VERIFICATION_SOURCE_HINT', '')
+        if hint:
+            pages = []
+            for url in re.findall(r'https://[^\s]+', hint):
+                host = (urllib.parse.urlsplit(url).hostname or '').lower()
+                if not host.endswith('.go.kr'):
+                    continue
+                raw = request(url, raw=True).decode('utf-8', errors='replace')
+                raw = re.sub(r'<(script|style)[\s\S]*?</\1>', '', raw, flags=re.I)
+                text = ' '.join(html.unescape(re.sub(r'<[^>]+>', ' ', raw)).split())[:35000]
+                pages.append({'url': url, 'text': text})
+            if not pages:
+                raise RuntimeError('Verification official pages unavailable')
+            return self.complete_draft({'research_notes': prompt + '\n서울국제정원박람회만 검토. 다음 직접 읽은 공식 자료만 사용. 종료된 일회성 프로그램을 이번 주말 프로그램으로 소개하지 말 것. 정원 감상·관찰 놀이 등 편집 제안은 상설 프로그램과 구분.\n' + json.dumps(pages, ensure_ascii=False)})
         prompt += '\n출처는 반드시 실제 행사 상세 안내를 담은 go.kr 또는 visitseoul.net, ggtour.or.kr, korean.visitkorea.or.kr 공식 페이지를 포함. 뉴스·블로그만 있으면 추천 불가. site:go.kr 검색을 사용하고 자료가 없으면 available=false.'
         if self.env.get('VERIFICATION_SOURCE_HINT'):
             prompt += '\n실제 실행 확인용 공식 자료 후보(일정·프로그램을 직접 확인할 것): ' + self.env['VERIFICATION_SOURCE_HINT']
