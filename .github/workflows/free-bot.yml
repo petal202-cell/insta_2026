@@ -4,7 +4,7 @@ on:
     paths: ['free_bot.py', 'card.py', 'test_free_bot.py', '.github/workflows/free-bot.yml', 'candidate_bot.py', 'test_candidate_bot.py']
   schedule:
     - cron: '7 22 * * *'
-    - cron: '11,26,41,56 * * * *'
+    - cron: '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'
   workflow_dispatch:
     inputs:
       mode:
