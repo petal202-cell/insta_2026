@@ -51,7 +51,7 @@ jobs:
         run: python candidate_bot.py "$BOT_MODE"
       - name: Scheduled command
         if: github.event_name == 'schedule' && vars.BOT_ENABLED != 'false'
-        run: python free_bot.py daily
+        run: python candidate_bot.py daily
 
       - name: Send initial candidate selection after transition
         if: github.event_name == 'push' && github.event.head_commit.message == 'Switch scheduled bot to candidate selection and approval flow'
@@ -64,3 +64,7 @@ jobs:
 # Refresh pending previews with keyword DM booking delivery.
 
 # Process received owner approval after scheduler delay.
+
+      - name: Recover today's candidate offer after schedule fix
+        if: github.event_name == 'push' && github.event.head_commit.message == 'Fix scheduled candidate-selection entrypoint and recover today'
+        run: python candidate_bot.py daily
