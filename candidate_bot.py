@@ -57,34 +57,40 @@ def make_draft(candidate):
     c = candidate
     if not c.get("summary"):
         raise ValueError("Official activity description is required before drafting")
+    activities = c.get("activity_quotes") or [line.lstrip("• ").strip() for line in c["summary"].splitlines() if line.strip()]
+    opening = "🌿 " + activities[0].rstrip(".")
     lines = [
-        "📝 신청 시작 전에 확인해두세요!",
-        c["title"], "",
-        "👧 대상: " + c["audience"],
-        "📍 장소: " + c["place"],
-        "💰 비용 안내: " + c["fee_label"],
-        "🗓 신청 시작: " + display_date(c["registration_start"]),
+        opening,
+        "💰 " + c["fee_label"] + " · " + c["place"],
+        "", c["summary"],
+        "", "📍 " + c["title"],
+        "대상: " + c["audience"],
+        "장소: " + c["place"],
+        "", "🗓 신청 시작: " + display_date(c["registration_start"]),
         "신청 마감: " + display_date(c.get("registration_end")),
-        "📅 프로그램 운영기간(API 안내): " + display_period(c.get("event_start"), c.get("event_end")),
-        "개별 체험 날짜·시간: 회차별 예약 화면에서 확인해주세요.",
-        "", "어떤 활동인가요?",
-        c["summary"],
-        "", "⚠️ 운영기간은 개별 수업 날짜와 다를 수 있습니다. 토·일 회차, 대상 학년, 보호자 동반, 실제 금액과 예약 조건은 공식 페이지에서 확인해주세요.",
-        "접수 시작 안내이며 잔여석이나 예약 성공을 보장하지 않습니다.",
-        "대상 확인: " + ("초등 저학년과 겹치는 대상이 명시돼 있습니다." if c["grade_status"] == "explicit_match" else "초1~3 참여 가능 여부를 추가 확인해야 합니다."),
-        "", "💌 예약 링크가 필요하면 이 게시물 댓글에 ‘" + dm_keyword(c) + "’를 남겨주세요.",
-        "팔로우하지 않아도 DM으로 예약 링크를 보내드립니다.",
-        "", "다음 체험 소식도 보고 싶다면 @sglide_h를 팔로우해주세요 🌿",
-        "출처: 서울특별시 공공서비스예약 · " + c["checked_at"][:10],
-        "이미지: 직접 제작한 정보 카드", "#초등체험 #초등저학년 #박물관교육 #서울아이와가볼만한곳"
+        "프로그램 운영기간: " + display_period(c.get("event_start"), c.get("event_end")),
+        "개별 체험 날짜·시간은 회차별 예약 화면에서 확인해주세요.",
+    ]
+    if c["grade_status"] != "explicit_match":
+        lines.append("초1~3 참여 가능 여부와 보호자 동반 조건은 상세 안내를 확인해주세요.")
+    lines += [
+        "※ 회차별 마감·대기 여부를 확인하고 예약해주세요.",
+        "", "💌 예약 링크는 댓글에 ❤️를 남겨주세요.",
+        "팔로우하지 않아도 DM으로 보내드립니다.",
+        "다음 신청 소식도 놓치지 않으려면 @sglide_h 🌿",
+        "", "출처: 서울특별시 공공서비스예약 · " + c["checked_at"][:10],
+        "이미지: 직접 제작한 정보 카드",
+        "#초등체험 #초등저학년 #서울아이와가볼만한곳"
     ]
     caption = "\n".join(lines)
     if len(caption) > 2100:
         raise ValueError("Caption too long")
-    return {"event": c["title"][:45], "headline": "신청 오픈 예정 · 초등 체험 후보",
+    return {"event": c["title"][:45], "headline": "아이와 함께하는 체험",
+            "card_title": activities[0][:38].rstrip("."),
+            "fee": c["fee_label"], "opening": opening,
             "dates": "신청 시작 " + display_date(c["registration_start"]),
             "place": c["place"][:40],
-            "activities": [("대상 " + c["audience"])[:30], ("비용 " + c["fee_label"])[:30]],
+            "activities": [x[:30] for x in activities[:3]],
             "caption": caption}
 
 class CandidateBot(Bot):
@@ -285,7 +291,7 @@ class CandidateBot(Bot):
             if reviewed.get("ok") is not True:
                 raise ValueError("Revised copy factual review failed")
             draft = make_draft({**candidate, "summary": edited["summary"]})
-            draft["caption"] = draft["caption"].replace("📝 신청 시작 전에 확인해두세요!", edited["opening"], 1)
+            draft["caption"] = draft["caption"].replace(draft["opening"], edited["opening"], 1)
             draft["activities"] = activities
             if len(draft["caption"]) > 2100:
                 raise ValueError("Caption too long")
