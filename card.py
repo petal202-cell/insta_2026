@@ -69,9 +69,11 @@ def render_slide(title, body, label, page, font_path, accent=False):
         raise ValueError("Carousel slide overflow")
     draw.rounded_rectangle((90, 80, 990, 148), radius=25, fill="#E77937")
     draw.text((118, 92), label, font=ImageFont.truetype(font_path, 30), fill="white")
-    text_block(title, 225, 78 if accent else 64, 710, fg)
-    draw.line((92, 755, 988, 755), fill="#E77937", width=5)
-    text_block(body, 805, 38, 1195, muted)
+    activity_page = label == "활동 미리보기"
+    divider = 450 if activity_page else 755
+    text_block(title, 225, 78 if accent else 64, divider-45, fg)
+    draw.line((92, divider, 988, divider), fill="#E77937", width=5)
+    text_block(body, divider+50, 38, 1195, muted)
     draw.text((92, 1250), "@sglide_h", font=ImageFont.truetype(font_path, 27), fill=fg)
     draw.text((880, 1250), f"{page}/5", font=ImageFont.truetype(font_path, 27), fill=fg)
     out = io.BytesIO()
