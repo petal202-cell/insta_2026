@@ -30,13 +30,17 @@ def render_card(draft, font_path):
         return y
     draw.rounded_rectangle((72, 65, 1008, 142), radius=34, fill='#E77937')
     draw.text((110, 77), draft.get('headline', '이번 주말 · 아이들과 하루 한 곳'), font=ImageFont.truetype(font_path, 33), fill='white')
-    y = block(draft['event'], 69, 192, max_lines=2)
+    if draft.get('card_title'):
+        block(draft.get('fee', ''), 52, 174, '#C2532A', 1)
+        y = block(draft['card_title'], 72, 270, max_lines=3)
+    else:
+        y = block(draft['event'], 69, 192, max_lines=2)
     y = block(draft['dates'], 31, y + 23, '#686F58', 2)
     y = block(draft['place'], 31, y + 8, '#686F58', 2)
     draw.line((90, y + 28, 990, y + 28), fill='#D6CEBB', width=2)
-    y = block('아이들과 이렇게 즐겨요', 40, y + 65)
+    y = block('함께 해볼 활동', 36, y + 48)
     for i, item in enumerate(draft['activities'], 1):
-        y = block(f'{i:02d}  {item}', 34, y + 21, max_lines=2)
+        y = block(f'{i:02d}  {item}', 31, y + 14, max_lines=2)
     if y > 1170:
         raise ValueError('Card layout overflow')
     draw.line((90, 1214, 990, 1214), fill='#D6CEBB', width=2)
