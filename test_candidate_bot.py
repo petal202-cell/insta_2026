@@ -89,10 +89,11 @@ class RevisionTests(unittest.TestCase):
         message={"id":"m","createdAt":dt.datetime.now(dt.timezone.utc).isoformat()}
         responses=iter([json.dumps({"opening":"아이와 함께 준비해요","summary":"공식 페이지에서 세부 활동을 확인해주세요.","activities":["초등 1~3학년","참가비 무료"]}), '{"ok":true}'])
         bot.gemini=lambda *a,**kw:next(responses)
-        with patch("candidate_bot.request"), patch("card.render_card",return_value=b"png"):
+        with patch("candidate_bot.request"), patch.object(bot,"carousel_media",return_value=[{"type":"image","url":f"https://example.go.kr/{i}.png"} for i in range(5)]):
             bot.revise(ledger,message,"더 친근하게")
         self.assertEqual(len(updates),1)
-        self.assertEqual(len(sent),3)
+        self.assertEqual(len(sent),7)
+        self.assertEqual(len(remote["mediaItems"]),5)
         state=ledger["metadata"][TAG]
         self.assertEqual(state["phase"],"pending")
         self.assertNotIn(candidate["booking_url"],remote["content"])
