@@ -10,6 +10,30 @@ from worker import KST, request, fingerprint, parse_json
 FEED = "https://raw.githubusercontent.com/petal202-cell/kids-weekend-api/main/data/candidates.json"
 FLOW = "candidate-selection-v1"
 
+# Reviewed per-image records only. A public API URL is not a blanket image license.
+IMAGE_POLICY_VERSION = "official-first-v1"
+REVIEWED_IMAGES = {
+    "S260810110612092228": {
+        "url": "https://media.zernio.com/temp/1792664911694_km95rs2q_yongsan-official-poster.png",
+        "source_url": "https://yeyak.seoul.go.kr/web/common/file/FileDown.do?file_id=17863276020306FHRP3S51WW3AV9Q4LBP16MB7",
+        "attribution": "이미지 제공: 용산역사박물관 · 서울특별시 공공서비스예약 / 공공누리 제1유형",
+        "rights_basis": "https://data.seoul.go.kr/dataList/OA-2269/O/1/datasetView.do",
+        "review_note": "Dataset license reviewed; no separate restriction visible on supplied poster. Not individual written permission.",
+    },
+}
+
+def official_media(candidate, card_url):
+    reviewed = REVIEWED_IMAGES.get(candidate.get("id"))
+    items = [{"type": "image", "url": card_url}]
+    if reviewed:
+        items.insert(0, {"type": "image", "url": reviewed["url"]})
+    return items
+
+def image_credit(candidate):
+    reviewed = REVIEWED_IMAGES.get(candidate.get("id"))
+    return reviewed["attribution"] + "\n2장: 직접 제작한 정보 카드" if reviewed else "이미지: 직접 제작한 정보 카드"
+
+
 def selection(message, state, owner):
     if state.get("phase") != "choosing" or message.get("direction") != "incoming":
         return None
@@ -79,7 +103,7 @@ def make_draft(candidate):
         "팔로우하지 않아도 DM으로 보내드립니다.",
         "다음 신청 소식도 놓치지 않으려면 @sglide_h 🌿",
         "", "출처: 서울특별시 공공서비스예약 · " + c["checked_at"][:10],
-        "이미지: 직접 제작한 정보 카드",
+        image_credit(c),
         "#초등체험 #초등저학년 #서울아이와가볼만한곳"
     ]
     caption = "\n".join(lines)
@@ -94,6 +118,48 @@ def make_draft(candidate):
             "caption": caption}
 
 class CandidateBot(Bot):
+
+    def refresh_official_preview(self, ledger):
+        state = ledger.get("metadata", {}).get(TAG, {})
+        if state.get("flow") != FLOW or state.get("phase") != "pending" or state.get("imagePolicyVersion") == IMAGE_POLICY_VERSION:
+            return False
+        candidate = state["choices"][state["selectedIndex"]]
+        if candidate.get("id") not in REVIEWED_IMAGES:
+            return False
+        post = self.z("/posts/" + state["postId"])["post"]
+        if post["status"] != "draft" or fingerprint(post) != state["digest"]:
+            self.save(ledger, phase="needs_review")
+            return True
+        self.save(ledger, phase="previewing")
+        items = official_media(candidate, post["mediaItems"][-1]["url"])
+        caption = post["content"].replace("이미지: 직접 제작한 정보 카드", image_credit(candidate))
+        self.z("/posts/" + post["_id"], "PUT", {"isDraft": True, "content": caption, "mediaItems": items})
+        post = self.z("/posts/" + post["_id"])["post"]
+        for index, media in enumerate(post["mediaItems"], 1):
+            self.telegram(f"📝 수정 초안 {index}/2 · 공식 홍보 이미지 + 활동 정보 카드", media["url"])
+        self.telegram(post["content"])
+        self.telegram("공식 이미지를 추가한 수정본입니다. 이전 승인은 적용되지 않습니다. 확인 후 새로 승인해주세요:\n승인 " + post["_id"])
+        draft = {**state.get("draftData", {}), "caption": caption}
+        self.save(ledger, phase="pending", imagePolicyVersion=IMAGE_POLICY_VERSION,
+                  draftData=draft, digest=fingerprint(post), previewAt=time.time())
+        return True
+
+    def discover_official_image(self, candidate):
+        c = dict(candidate)
+        if not c.get("official_image_url"):
+            try:
+                detail = request("http://openapi.seoul.go.kr:8088/sample/json/ListPublicReservationDetail/1/5/" + urllib.parse.quote(c["id"], safe="") + "/")
+                rows = detail.get("ListPublicReservationDetail", {}).get("row", [])
+                if rows:
+                    c["official_image_url"] = rows[0].get("IMG_PATH") or rows[0].get("IMGURL")
+            except Exception:
+                pass
+        if c.get("id") not in REVIEWED_IMAGES:
+            self.telegram("🖼 공식 이미지 검토: " + c["title"] + "\n" +
+                          ("공식 이미지 후보: " + c["official_image_url"] + "\n이용조건 미확인으로 이번 초안에는 정보 카드를 사용합니다." if c.get("official_image_url") else
+                           "공식 이미지를 확인하지 못해 정보 카드를 사용합니다."))
+        return c
+
     def ensure_dm(self, ledger, candidate):
         state = ledger["metadata"][TAG]
         if state.get("dmAutomationId"):
@@ -120,6 +186,8 @@ class CandidateBot(Bot):
         self.save(ledger, dmAutomationId=automation.get("id", automation.get("_id")))
 
     def check(self, ledger):
+        if self.refresh_official_preview(ledger):
+            return
         state = ledger.get("metadata", {}).get(TAG, {})
         if state.get("flow") == FLOW and state.get("phase") == "pending" and not state.get("dmAutomationId"):
             post_id = state["postId"]
@@ -222,7 +290,7 @@ class CandidateBot(Bot):
     def draft_selected(self, ledger, c):
         state = ledger["metadata"][TAG]
         from card import render_card
-        c = self.prepare_activity(c)
+        c = self.discover_official_image(self.prepare_activity(c))
         choices = list(state["choices"])
         choices[state["selectedIndex"]] = c
         self.save(ledger, choices=choices)
@@ -233,15 +301,16 @@ class CandidateBot(Bot):
         request(upload["uploadUrl"], "PUT", image, raw=True)
         self.save(ledger, phase="creating_draft")
         post = self.z("/posts", "POST", {"isDraft": True, "content": draft["caption"],
-            "mediaItems": [{"type": "image", "url": upload["publicUrl"]}],
+            "mediaItems": official_media(c, upload["publicUrl"]),
             "platforms": [{"platform": "instagram", "accountId": self.env["INSTAGRAM_ACCOUNT_ID"]}]})["post"]
-        self.save(ledger, phase="previewing", postId=post["_id"], draftData=draft,
+        self.save(ledger, phase="previewing", postId=post["_id"], draftData=draft, imagePolicyVersion=IMAGE_POLICY_VERSION,
                   expiresAt=min(time.time()+36*3600, dt.datetime.fromisoformat(c["registration_start"]).timestamp()))
         post = self.z("/posts/"+post["_id"])["post"]
         if post["status"] != "draft":
             raise RuntimeError("Unexpected draft state")
         self.ensure_dm(ledger, c)
-        self.telegram("📝 채택한 후보 초안 · " + c["title"], post["mediaItems"][0]["url"])
+        for media in post["mediaItems"]:
+            self.telegram("📝 채택한 후보 초안 · " + c["title"], media["url"])
         self.telegram(post["content"])
         self.telegram(f"내용과 신청 조건을 검토한 뒤 게시하려면:\n승인 {post['_id']}\n\n보류:\n보류 {post['_id']}\n\n수정하려면:\n수정 {post['_id']} 요청내용\n\n채택만으로 게시하지 않습니다. 신청 시작 전에 승인이 필요합니다.")
         self.save(ledger, phase="pending", digest=fingerprint(post), previewAt=time.time())
@@ -303,10 +372,11 @@ class CandidateBot(Bot):
             if current["status"] != "draft" or fingerprint(current) != state["digest"]:
                 raise RuntimeError("Draft changed during revision")
             self.z("/posts/" + post_id, "PUT", {"isDraft":True,"content":draft["caption"],
-                "mediaItems":[{"type":"image","url":upload["publicUrl"]}]})
+                "mediaItems":official_media(candidate, upload["publicUrl"])})
             post = self.z("/posts/" + post_id)["post"]
             self.save(ledger, phase="previewing", digest=fingerprint(post), draftData=draft)
-            self.telegram(f"📝 수정본 {count} · " + candidate["title"], post["mediaItems"][0]["url"])
+            for media in post["mediaItems"]:
+                self.telegram(f"📝 수정본 {count} · " + candidate["title"], media["url"])
             self.telegram(draft["caption"])
             self.telegram(f"수정본 {count} 확인 후 새로 승인해주세요:\n승인 {post_id}\n\n추가 수정:\n수정 {post_id} 요청내용\n\n보류:\n보류 {post_id}\n\n이전 승인은 적용되지 않습니다.")
             self.save(ledger, phase="pending", previewAt=time.time())
