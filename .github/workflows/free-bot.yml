@@ -70,3 +70,5 @@ jobs:
         run: python candidate_bot.py daily
 
 # Process received October 22 candidate selection.
+
+# Refresh reviewed official image preview and require fresh approval.
