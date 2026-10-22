@@ -14,7 +14,7 @@ FLOW = "candidate-selection-v1"
 IMAGE_POLICY_VERSION = "official-first-v1"
 REVIEWED_IMAGES = {
     "S260810110612092228": {
-        "url": "https://media.zernio.com/temp/1792664911694_km95rs2q_yongsan-official-poster.png",
+        "url": "https://media.zernio.com/media/1792664911694_km95rs2q_yongsan-official-poster.png",
         "source_url": "https://yeyak.seoul.go.kr/web/common/file/FileDown.do?file_id=17863276020306FHRP3S51WW3AV9Q4LBP16MB7",
         "attribution": "이미지 제공: 용산역사박물관 · 서울특별시 공공서비스예약 / 공공누리 제1유형",
         "rights_basis": "https://data.seoul.go.kr/dataList/OA-2269/O/1/datasetView.do",
@@ -31,7 +31,7 @@ def official_media(candidate, card_url):
 
 def image_credit(candidate):
     reviewed = REVIEWED_IMAGES.get(candidate.get("id"))
-    return reviewed["attribution"] + "\n2장: 직접 제작한 정보 카드" if reviewed else "이미지: 직접 제작한 정보 카드"
+    return reviewed["attribution"] + "\n그 외: 직접 제작한 정보 카드" if reviewed else "이미지: 직접 제작한 정보 카드"
 
 
 def selection(message, state, owner):
@@ -159,6 +159,29 @@ class CandidateBot(Bot):
                           ("공식 이미지 후보: " + c["official_image_url"] + "\n이용조건 미확인으로 이번 초안에는 정보 카드를 사용합니다." if c.get("official_image_url") else
                            "공식 이미지를 확인하지 못해 정보 카드를 사용합니다."))
         return c
+
+
+    def carousel_media(self, c, draft, prefix):
+        from card import render_slide
+        quotes = draft.get("carousel_activities") or c.get("activity_quotes") or draft["activities"]
+        hook = max(quotes, key=lambda x: sum(w in x for w in ("만들", "완성", "탐험", "관찰", "스티커")))
+        slides = [
+            (hook, c["fee_label"]+" · "+c["place"]+"\n"+c["title"], "아이와 이번 주말 어디 갈까", True),
+            (c["title"], "대상: "+c["audience"]+"\n"+c["fee_label"]+" · "+c["place"], "우리 아이와 맞는 체험일까", False),
+            ("아이가 직접 하는 일", "\n\n".join("• "+x for x in quotes), "활동 미리보기", False),
+            ("신청 전에 확인하세요", "신청 시작: "+display_date(c["registration_start"])+"\n신청 마감: "+display_date(c.get("registration_end"))+"\n운영기간: "+display_period(c.get("event_start"), c.get("event_end"))+"\n회차별 시간·마감 여부는 예약 화면에서 확인", "신청 일정", False),
+            ("예약 링크가 필요하면\n댓글에 하트", "팔로우하지 않아도 DM으로 보내드립니다.\n\n다음 체험 소식은 @sglide_h\n출처: 서울특별시 공공서비스예약", "저장해두고 신청일에 확인하세요", True),
+        ]
+        media = []
+        for number, (title, body, label, accent) in enumerate(slides, 1):
+            if number == 2 and c.get("id") in REVIEWED_IMAGES:
+                media.append({"type":"image", "url":REVIEWED_IMAGES[c["id"]]["url"]})
+                continue
+            image = render_slide(title, body, label, number, self.env.get("FONT_PATH", "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"), accent)
+            upload = self.z("/media/presign", "POST", {"filename":prefix+f"-{number}.png", "contentType":"image/png", "size":len(image)})
+            request(upload["uploadUrl"], "PUT", image, raw=True)
+            media.append({"type":"image", "url":upload["publicUrl"]})
+        return media
 
     def ensure_dm(self, ledger, candidate):
         state = ledger["metadata"][TAG]
@@ -296,12 +319,10 @@ class CandidateBot(Bot):
         self.save(ledger, choices=choices)
         draft = make_draft(c)
         draft["activities"] = [quote[:28] for quote in c["activity_quotes"]]
-        image = render_card(draft, self.env.get("FONT_PATH", "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"))
-        upload = self.z("/media/presign", "POST", {"filename": state["batch"]+"-selection.png", "contentType": "image/png", "size": len(image)})
-        request(upload["uploadUrl"], "PUT", image, raw=True)
+        media = self.carousel_media(c, draft, state["batch"]+"-selection")
         self.save(ledger, phase="creating_draft")
         post = self.z("/posts", "POST", {"isDraft": True, "content": draft["caption"],
-            "mediaItems": official_media(c, upload["publicUrl"]),
+            "mediaItems": media,
             "platforms": [{"platform": "instagram", "accountId": self.env["INSTAGRAM_ACCOUNT_ID"]}]})["post"]
         self.save(ledger, phase="previewing", postId=post["_id"], draftData=draft, imagePolicyVersion=IMAGE_POLICY_VERSION,
                   expiresAt=min(time.time()+36*3600, dt.datetime.fromisoformat(c["registration_start"]).timestamp()))
@@ -364,15 +385,13 @@ class CandidateBot(Bot):
             draft["activities"] = activities
             if len(draft["caption"]) > 2100:
                 raise ValueError("Caption too long")
-            from card import render_card
-            image = render_card(draft, self.env.get("FONT_PATH", "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"))
-            upload = self.z("/media/presign", "POST", {"filename":post_id+f"-v{count}.png","contentType":"image/png","size":len(image)})
-            request(upload["uploadUrl"], "PUT", image, raw=True)
+            draft["carousel_activities"] = activities
+            media = self.carousel_media(candidate, draft, post_id+f"-v{count}")
             current = self.z("/posts/" + post_id)["post"]
             if current["status"] != "draft" or fingerprint(current) != state["digest"]:
                 raise RuntimeError("Draft changed during revision")
             self.z("/posts/" + post_id, "PUT", {"isDraft":True,"content":draft["caption"],
-                "mediaItems":official_media(candidate, upload["publicUrl"])})
+                "mediaItems":media})
             post = self.z("/posts/" + post_id)["post"]
             self.save(ledger, phase="previewing", digest=fingerprint(post), draftData=draft)
             for media in post["mediaItems"]:
