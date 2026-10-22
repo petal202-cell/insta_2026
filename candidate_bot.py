@@ -337,6 +337,7 @@ class CandidateBot(Bot):
                         # Claim first. Any uncertain draft/send failure requires manual review, never retry.
                         self.save(ledger, phase="selected", selectedIndex=index, selectionMessageId=message["id"])
                         try:
+                            self.telegram("✅ 채택 확인 · " + candidate["title"] + "\n공식 활동 내용을 확인하고 카드·본문 초안을 작성하고 있어요. 완료 후 별도 승인을 요청합니다.")
                             self.draft_selected(ledger, candidate)
                         except Exception:
                             self.save(ledger, phase="selection_failed")
