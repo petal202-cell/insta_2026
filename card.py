@@ -49,3 +49,31 @@ def render_card(draft, font_path):
     out = io.BytesIO()
     image.save(out, format='PNG')
     return out.getvalue()
+
+
+def render_slide(title, body, label, page, font_path, accent=False):
+    image = Image.new("RGB", (1080, 1350), "#173F36" if accent else "#FAF5E9")
+    draw = ImageDraw.Draw(image)
+    fg = "#FAF5E9" if accent else "#173F36"
+    muted = "#C7DAD0" if accent else "#5F7066"
+    def text_block(text, top, size, bottom, color):
+        while size >= 24:
+            font = ImageFont.truetype(font_path, size)
+            lines = wrap(text, font, 896)
+            if top + len(lines)*(size+18) <= bottom:
+                for line in lines:
+                    draw.text((92, top), line, font=font, fill=color)
+                    top += size+18
+                return top
+            size -= 2
+        raise ValueError("Carousel slide overflow")
+    draw.rounded_rectangle((90, 80, 990, 148), radius=25, fill="#E77937")
+    draw.text((118, 92), label, font=ImageFont.truetype(font_path, 30), fill="white")
+    text_block(title, 225, 78 if accent else 64, 710, fg)
+    draw.line((92, 755, 988, 755), fill="#E77937", width=5)
+    text_block(body, 805, 38, 1195, muted)
+    draw.text((92, 1250), "@sglide_h", font=ImageFont.truetype(font_path, 27), fill=fg)
+    draw.text((880, 1250), f"{page}/5", font=ImageFont.truetype(font_path, 27), fill=fg)
+    out = io.BytesIO()
+    image.save(out, format="PNG")
+    return out.getvalue()
