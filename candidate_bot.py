@@ -34,6 +34,20 @@ def image_credit(candidate):
     return reviewed["attribution"] + "\n그 외: 직접 제작한 정보 카드" if reviewed else "이미지: 직접 제작한 정보 카드"
 
 
+
+def activity_source(candidate):
+    source = str(candidate.get("description") or "")
+    if "3. 상세내용" in source:
+        source = source.split("3. 상세내용", 1)[1]
+    return source.split("4. 주의사항", 1)[0].strip()[:18000]
+
+def selection_deadline(candidate):
+    value = candidate.get("registration_end") or candidate.get("event_end")
+    try:
+        return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError, AttributeError):
+        return 0
+
 def selection(message, state, owner):
     if state.get("phase") != "choosing" or message.get("direction") != "incoming":
         return None
@@ -47,7 +61,10 @@ def selection(message, state, owner):
         if len(parts) != 3 or parts[:2] != ["채택", state["batch"]]:
             return None
         index = int(parts[2]) - 1
-        return index if 0 <= index < len(state["choices"]) else None
+        if not 0 <= index < len(state["choices"]):
+            return None
+        deadline = selection_deadline(state["choices"][index])
+        return index if not deadline or stamp <= deadline else None
     except (KeyError, ValueError, TypeError):
         return None
 
@@ -99,8 +116,8 @@ def make_draft(candidate):
         lines.append("초1~3 참여 가능 여부와 보호자 동반 조건은 상세 안내를 확인해주세요.")
     lines += [
         "※ 회차별 마감·대기 여부를 확인하고 예약해주세요.",
-        "", "💌 예약 링크는 이 게시물 댓글에 ❤️를 남겨주세요.",
-        "팔로우하지 않아도 DM으로 보내드립니다.",
+        "", "🔗 공식 예약 링크", c["booking_url"],
+        "링크가 열리지 않으면 서울시 공공서비스예약에서 프로그램명을 검색해주세요.",
         "다음 신청 소식도 놓치지 않으려면 @sglide_h 🌿",
         "", "출처: 서울특별시 공공서비스예약 · " + c["checked_at"][:10],
         image_credit(c),
@@ -118,6 +135,14 @@ def make_draft(candidate):
             "caption": caption}
 
 class CandidateBot(Bot):
+
+    def telegram(self, text, media=None):
+        body = {"accountId": self.env["TELEGRAM_ACCOUNT_ID"], "message": text}
+        if media:
+            body.update(attachmentUrl=media, attachmentType="image")
+        result = self.z("/inbox/conversations/" + self.env["TELEGRAM_CONVERSATION_ID"] + "/messages", "POST", body)
+        if result.get("success") is not True or not result.get("data", {}).get("messageId"):
+            raise RuntimeError("Telegram inbox delivery not confirmed")
 
     def refresh_official_preview(self, ledger):
         state = ledger.get("metadata", {}).get(TAG, {})
@@ -170,7 +195,7 @@ class CandidateBot(Bot):
             (c["title"], "대상: "+c["audience"]+"\n"+c["fee_label"]+" · "+c["place"], "우리 아이와 맞는 체험일까", False),
             ("아이가 직접 하는 일", "\n\n".join("• "+x for x in quotes), "활동 미리보기", False),
             ("신청 전에 확인하세요", "신청 시작: "+display_date(c["registration_start"])+"\n신청 마감: "+display_date(c.get("registration_end"))+"\n운영기간: "+display_period(c.get("event_start"), c.get("event_end"))+"\n회차별 시간·마감 여부는 예약 화면에서 확인", "신청 일정", False),
-            ("예약 링크가 필요하면\n댓글에 하트", "팔로우하지 않아도 DM으로 보내드립니다.\n\n다음 체험 소식은 @sglide_h\n출처: 서울특별시 공공서비스예약", "저장해두고 신청일에 확인하세요", True),
+            ("예약은 본문 링크에서", "서울시 공공서비스예약에서 프로그램명을 검색해도 됩니다.\n\n회차별 상태를 확인한 뒤 신청해주세요.\n출처: 서울특별시 공공서비스예약", "직접 예약 안내", True),
         ]
         media = []
         for number, (title, body, label, accent) in enumerate(slides, 1):
@@ -184,6 +209,8 @@ class CandidateBot(Bot):
         return media
 
     def ensure_dm(self, ledger, candidate):
+        if ledger.get("metadata", {}).get(TAG, {}).get("bookingDelivery") == "direct_link":
+            return
         state = ledger["metadata"][TAG]
         if state.get("dmAutomationId"):
             return
@@ -212,7 +239,7 @@ class CandidateBot(Bot):
         if self.refresh_official_preview(ledger):
             return
         state = ledger.get("metadata", {}).get(TAG, {})
-        if state.get("flow") == FLOW and state.get("phase") == "pending" and not state.get("dmAutomationId"):
+        if state.get("flow") == FLOW and state.get("phase") == "pending" and not state.get("dmAutomationId") and state.get("bookingDelivery") != "direct_link":
             post_id = state["postId"]
             remote = self.z("/posts/"+post_id)["post"]
             if remote["status"] != "draft" or fingerprint(remote) != state["digest"]:
@@ -262,12 +289,12 @@ class CandidateBot(Bot):
             group_only = "단체" in audience and not any(w in audience for w in ("개인", "가족"))
             weekday_only = bool(re.search(r"\\([월화수목금](?:요일)?(?:[,/·][월화수목금])*(?:,야간)?\\)", title)) and not any(w in title for w in ("주말", "토요일", "일요일"))
             child_related = any(w in audience for w in ("초등", "어린이", "가족", "아동"))
-            if time.time() < begin <= time.time() + 7*86400 and c.get("candidate") and c.get("booking_url") and child_related and not group_only and not weekday_only:
+            if len(activity_source(c)) >= 40 and time.time() < begin <= time.time() + 7*86400 and c.get("candidate") and c.get("booking_url") and child_related and not group_only and not weekday_only:
                 choices.append(c)
         choices.sort(key=lambda c: (c["registration_start"], c["id"]))
         choices = choices[:8]
         batch = day.replace("-", "")
-        expires = min(time.time()+24*3600, min((dt.datetime.fromisoformat(c["registration_start"]).timestamp() for c in choices), default=time.time()+24*3600))
+        expires = time.time()+24*3600
         state = {"flow": FLOW, "day": day, "batch": batch, "phase": "offering", "choices": choices,
                  "choiceExpiresAt": expires}
         ledger = self.z("/posts", "POST", {"isDraft": True, "tags": [TAG],
@@ -288,10 +315,7 @@ class CandidateBot(Bot):
             fresh = next((x for x in feed.get("candidates", []) if x.get("id") == c.get("id")), None)
             if fresh:
                 c = {**c, "description": fresh.get("description", "")}
-        source = c.get("description", "")
-        if "3. 상세내용" in source:
-            source = source.split("3. 상세내용", 1)[1]
-        source = source.split("4. 주의사항", 1)[0].strip()[:18000]
+        source = activity_source(c)
         if len(source) < 40:
             raise ValueError("Official activity information insufficient")
         schema = {"type":"object","properties":{
@@ -324,8 +348,8 @@ class CandidateBot(Bot):
         post = self.z("/posts", "POST", {"isDraft": True, "content": draft["caption"],
             "mediaItems": media,
             "platforms": [{"platform": "instagram", "accountId": self.env["INSTAGRAM_ACCOUNT_ID"]}]})["post"]
-        self.save(ledger, phase="previewing", postId=post["_id"], draftData=draft, imagePolicyVersion=IMAGE_POLICY_VERSION,
-                  expiresAt=min(time.time()+36*3600, dt.datetime.fromisoformat(c["registration_start"]).timestamp()))
+        self.save(ledger, phase="previewing", postId=post["_id"], draftData=draft, imagePolicyVersion=IMAGE_POLICY_VERSION, bookingDelivery="direct_link",
+                  expiresAt=min(time.time()+36*3600, selection_deadline(c) or time.time()+36*3600))
         post = self.z("/posts/"+post["_id"])["post"]
         if post["status"] != "draft":
             raise RuntimeError("Unexpected draft state")
@@ -333,7 +357,7 @@ class CandidateBot(Bot):
         for media in post["mediaItems"]:
             self.telegram("📝 채택한 후보 초안 · " + c["title"], media["url"])
         self.telegram(post["content"])
-        self.telegram(f"내용과 신청 조건을 검토한 뒤 게시하려면:\n승인 {post['_id']}\n\n보류:\n보류 {post['_id']}\n\n수정하려면:\n수정 {post['_id']} 요청내용\n\n채택만으로 게시하지 않습니다. 신청 시작 전에 승인이 필요합니다.")
+        self.telegram(f"내용과 신청 조건을 검토한 뒤 게시하려면:\n승인 {post['_id']}\n\n보류:\n보류 {post['_id']}\n\n수정하려면:\n수정 {post['_id']} 요청내용\n\n채택만으로 게시하지 않습니다. 신청 마감 전까지 검토 후 승인해주세요.")
         self.save(ledger, phase="pending", digest=fingerprint(post), previewAt=time.time())
 
     def revise(self, ledger, message, instructions):
@@ -416,20 +440,21 @@ class CandidateBot(Bot):
                     Bot.check(self, ledger)
                 continue
             if state.get("phase") == "choosing":
-                if time.time() > state["choiceExpiresAt"]:
-                    self.save(ledger, phase="selection_expired")
-                    continue
                 for message in sorted(self.messages(), key=lambda m: m.get("createdAt", ""), reverse=True):
                     index = selection(message, state, self.env["APPROVER_ID"])
                     if index is not None:
                         candidate = state["choices"][index]
+                        if selection_deadline(candidate) and time.time() > selection_deadline(candidate):
+                            self.save(ledger, phase="selection_expired")
+                            self.telegram("선택한 후보의 신청 기한이 지났습니다. 새 후보를 확인해주세요.")
+                            break
                         # Claim first. Any uncertain draft/send failure requires manual review, never retry.
                         self.save(ledger, phase="selected", selectedIndex=index, selectionMessageId=message["id"])
                         try:
                             self.telegram("✅ 채택 확인 · " + candidate["title"] + "\n공식 활동 내용을 확인하고 카드·본문 초안을 작성하고 있어요. 완료 후 별도 승인을 요청합니다.")
                             self.draft_selected(ledger, candidate)
-                        except Exception:
-                            self.save(ledger, phase="selection_failed")
+                        except Exception as err:
+                            self.save(ledger, phase="selection_failed", error=type(err).__name__, failureStage="draft_selected")
                             self.telegram("⚠️ 채택한 후보의 활동 근거 확인 또는 초안 작성이 중단됐습니다. 자료 부족·API 오류 등을 Codex에서 확인해주세요. 임시 문구로 채우거나 자동 게시하지 않습니다.")
                             raise
                         break
