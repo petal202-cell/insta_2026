@@ -1,5 +1,6 @@
 """Candidate selection and separate publishing approval over Telegram."""
 import datetime as dt
+import calendar
 import json
 import re
 import time
@@ -7,7 +8,9 @@ import urllib.parse
 from free_bot import Bot, TAG
 from worker import KST, request, fingerprint, parse_json
 
-FEED = "https://raw.githubusercontent.com/petal202-cell/kids-weekend-api/main/data/candidates.json"
+FEED = "https://raw.githubusercontent.com/petal202-cell/kids-weekend-api/main/data/seongnam-candidates.json"
+ACTIVE_SOURCE = "seongnam_city_hall_html"
+SELECTION_POLICY = "seongnam-tomorrow-or-weekend-month-v1"
 FLOW = "candidate-selection-v1"
 
 # Reviewed per-image records only. A public API URL is not a blanket image license.
@@ -44,7 +47,12 @@ def activity_source(candidate):
 def selection_deadline(candidate):
     value = candidate.get("registration_end") or candidate.get("event_end")
     try:
-        return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if "T" not in value:
+            parsed = parsed.replace(hour=23, minute=59, second=59, tzinfo=KST)
+        elif parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=KST)
+        return parsed.timestamp()
     except (ValueError, TypeError, AttributeError):
         return 0
 
@@ -93,7 +101,68 @@ def display_period(start, end):
     a, b = display_date(start, False), display_date(end, False)
     return a if a == b else a + " ~ " + b
 
+
+def seongnam_window(now):
+    today = now.astimezone(KST).date()
+    start = today + dt.timedelta(days=5-today.weekday())
+    year,month = (start.year+1,1) if start.month==12 else (start.year,start.month+1)
+    return start, dt.date(year,month,min(start.day,calendar.monthrange(year,month)[1]))
+
+def active_candidate(c, now):
+    if c.get("source") != ACTIVE_SOURCE or c.get("selection_policy") != SELECTION_POLICY or not c.get("candidate"):
+        return False
+    if len(activity_source(c)) < 40:
+        return False
+    source_url = urllib.parse.urlsplit(c.get("source_url") or "")
+    if source_url.scheme!="https" or source_url.hostname!="www.seongnam.go.kr":
+        return False
+    today = now.astimezone(KST).date()
+    if c.get("registration_mode")=="required":
+        try:
+            opens=dt.datetime.fromisoformat(c["registration_start"])
+            opens=opens.replace(tzinfo=KST) if opens.tzinfo is None else opens.astimezone(KST)
+            return opens.date()==today+dt.timedelta(days=1)
+        except (ValueError,KeyError,TypeError):
+            return False
+    if c.get("registration_mode") not in ("not_required","not_listed"):
+        return False
+    try:
+        start,end=seongnam_window(now)
+        return c["event_start"][:10]<=end.isoformat() and c["event_end"][:10]>=max(today,start).isoformat()
+    except (KeyError,TypeError):
+        return False
+
+def event_schedule(c):
+    if c.get("registration_mode")=="required":
+        return "신청 시작: "+display_date(c.get("registration_start"),"T" in str(c.get("registration_start")))+"\n신청 마감: "+display_date(c.get("registration_end"),"T" in str(c.get("registration_end")))
+    return "접수: 사전 접수 불필요(공식 안내 기준)" if c.get("registration_mode")=="not_required" else "접수: 별도 접수 안내 없음 · 방문 전 원문 확인"
+
+def seongnam_draft(c):
+    if not c.get("summary"):
+        raise ValueError("Official activity description is required before drafting")
+    activities=c.get("activity_quotes") or [x.lstrip("• ").strip() for x in c["summary"].splitlines() if x.strip()]
+    place=c.get("place") or "장소는 공식 안내 확인"
+    fee=c.get("fee_label") or "비용은 공식 안내 확인"
+    opening="🌿 "+activities[0].rstrip(".")
+    caption="\n".join([opening,"",c["summary"],"","📍 "+c["title"],
+        "대상: "+c["audience"],"장소: "+place,"비용: "+fee,
+        "","행사 기간: "+display_period(c.get("event_start"),c.get("event_end")),
+        event_schedule(c),"개별 회차·초1~3 참여 조건은 공식 안내를 확인해주세요.",
+        "","🔗 공식 행사·신청 안내",c["source_url"],
+        "다음 성남 나들이 소식도 함께해요 @sglide_h 🌿",
+        "","출처: 성남시청 행사/강좌/공모 · "+c["checked_at"][:10],image_credit(c),
+        "#성남아이와가볼만한곳 #분당아이와 #판교아이와 #초등체험"])
+    if len(caption)>2100:
+        raise ValueError("Caption too long")
+    return {"event":c["title"][:45],"headline":"성남 아이와 주말 나들이",
+        "card_title":activities[0][:38].rstrip("."),"fee":fee,"opening":opening,
+        "dates":event_schedule(c),"place":place[:40],
+        "activities":[x[:30] for x in activities[:3]],"caption":caption}
+
+
 def make_draft(candidate):
+    if candidate.get('source') == ACTIVE_SOURCE:
+        return seongnam_draft(candidate)
     # Deterministic copy of the official API fields; no invented sessions or activities.
     c = candidate
     if not c.get("summary"):
@@ -171,6 +240,9 @@ class CandidateBot(Bot):
 
     def discover_official_image(self, candidate):
         c = dict(candidate)
+        if c.get("source") == ACTIVE_SOURCE:
+            self.telegram("🖼 "+c["title"]+"\n공식 이미지는 이용조건 검토 전 사용하지 않습니다. 정보 카드로 초안을 작성합니다.")
+            return c
         if not c.get("official_image_url"):
             try:
                 detail = request("http://openapi.seoul.go.kr:8088/sample/json/ListPublicReservationDetail/1/5/" + urllib.parse.quote(c["id"], safe="") + "/")
@@ -197,6 +269,14 @@ class CandidateBot(Bot):
             ("신청 전에 확인하세요", "신청 시작: "+display_date(c["registration_start"])+"\n신청 마감: "+display_date(c.get("registration_end"))+"\n운영기간: "+display_period(c.get("event_start"), c.get("event_end"))+"\n회차별 시간·마감 여부는 예약 화면에서 확인", "신청 일정", False),
             ("예약은 본문 링크에서", "서울시 공공서비스예약에서 프로그램명을 검색해도 됩니다.\n\n회차별 상태를 확인한 뒤 신청해주세요.\n출처: 서울특별시 공공서비스예약", "직접 예약 안내", True),
         ]
+        if c.get("source") == ACTIVE_SOURCE:
+            slides = [
+                (hook, c["fee_label"]+" · "+c["place"]+"\n"+c["title"],"성남 아이와 주말 나들이",True),
+                (c["title"],"대상: "+c["audience"]+"\n"+c["fee_label"]+" · "+c["place"],"우리 아이와 맞을까",False),
+                ("활동 미리보기","\n\n".join("• "+x for x in quotes),"공식 활동 안내",False),
+                ("일정을 확인하세요",event_schedule(c)+"\n행사 기간: "+display_period(c.get("event_start"),c.get("event_end")),"일정 안내",False),
+                ("본문의 공식 안내를 확인해요","성남시청 행사 상세 링크를 본문에 넣었습니다.\n방문 전 대상·장소·접수 조건을 확인해주세요.\n출처: 성남시청","공식 행사·신청 안내",True),
+            ]
         media = []
         for number, (title, body, label, accent) in enumerate(slides, 1):
             if number == 2 and c.get("id") in REVIEWED_IMAGES:
@@ -274,39 +354,36 @@ class CandidateBot(Bot):
     def offer(self, ledgers, now):
         day = now.date().isoformat()
         existing = [p for p in ledgers if p.get("metadata", {}).get(TAG, {}).get("flow") == FLOW
-                    and p["metadata"][TAG].get("day") == day]
+                    and p["metadata"][TAG].get("day") == day and p["metadata"][TAG].get("source") == ACTIVE_SOURCE]
         if existing:
             return
         feed = request(FEED)
         checked = dt.datetime.fromisoformat(feed["checked_at"]).timestamp()
         if not -300 <= time.time() - checked < 30*3600 or feed.get("sample_is_not_complete", True):
             raise RuntimeError("Full candidate feed is missing or stale")
-        choices = []
-        for c in feed.get("candidates", []):
-            begin = dt.datetime.fromisoformat(c["registration_start"]).timestamp()
-            audience = c.get("audience", "")
-            title = c.get("title", "")
-            group_only = "단체" in audience and not any(w in audience for w in ("개인", "가족"))
-            weekday_only = bool(re.search(r"\\([월화수목금](?:요일)?(?:[,/·][월화수목금])*(?:,야간)?\\)", title)) and not any(w in title for w in ("주말", "토요일", "일요일"))
-            child_related = any(w in audience for w in ("초등", "어린이", "가족", "아동"))
-            if len(activity_source(c)) >= 40 and time.time() < begin <= time.time() + 7*86400 and c.get("candidate") and c.get("booking_url") and child_related and not group_only and not weekday_only:
-                choices.append(c)
-        choices.sort(key=lambda c: (c["registration_start"], c["id"]))
+        if feed.get("source") != ACTIVE_SOURCE or feed.get("selection",{}).get("policy") != SELECTION_POLICY:
+            raise RuntimeError("Active Seongnam feed is not ready")
+        if feed.get("selection",{}).get("registration_day") != (now.astimezone(KST).date()+dt.timedelta(days=1)).isoformat():
+            raise RuntimeError("Seongnam feed selection date is stale")
+        choices = [c for c in feed.get("candidates",[]) if active_candidate(c,now)]
+        choices.sort(key=lambda c: (0 if c.get("registration_mode")=="required" else 1,c.get("registration_start") or c.get("event_start") or "",c["id"]))
         choices = choices[:8]
-        batch = day.replace("-", "")
+        batch = day.replace("-", "")+"SN"
         expires = time.time()+24*3600
-        state = {"flow": FLOW, "day": day, "batch": batch, "phase": "offering", "choices": choices,
+        state = {"flow": FLOW, "source": ACTIVE_SOURCE, "day": day, "batch": batch, "phase": "offering", "choices": choices,
                  "choiceExpiresAt": expires}
         ledger = self.z("/posts", "POST", {"isDraft": True, "tags": [TAG],
             "content": "후보 선택 상태 기록 " + day + " — 게시 대상 아님", "metadata": {TAG: state}})["post"]
         if not choices:
-            self.telegram("📋 " + day + " · 앞으로 7일 내 신청 시작 조건에 맞는 후보가 없습니다. 초안을 자동 작성하지 않습니다.")
+            self.telegram("📋 " + day + " · 내일 접수 시작 또는 이번 주말부터 한 달 내 행사 조건에 맞는 성남 후보가 없습니다. 초안을 자동 작성하지 않습니다.")
             self.save(ledger, phase="no_candidates")
             return
-        self.telegram("📋 " + day + " · 신청 오픈 예정 후보 " + str(len(choices)) + "곳\n초1~3 대상 여부가 불명확한 후보는 표시했습니다. 채택 후 초안을 만들고, 별도 승인 후 게시합니다.")
+        self.telegram("📋 " + day + " · 성남 후보 " + str(len(choices)) + "곳\n초1~3 대상 여부가 불명확한 후보는 표시했습니다. 채택 후 초안을 만들고, 별도 승인 후 게시합니다.")
+        if feed.get("partial_scan"):
+            self.telegram("일부 게시물의 필수 정보가 부족해 제외했습니다. 확인 가능한 후보만 보냅니다. 누락 기록: "+str(len(feed.get("errors",[])))+"건")
         for index, c in enumerate(choices, 1):
-            self.telegram(f"{index}. {c['title']}\n대상: {c['audience']}\n대상 검증: {c['grade_status']}\n장소: {c['place']}\n비용: {c['fee_label']}\n신청 시작: {display_date(c['registration_start'])}\n운영기간: {display_period(c.get('event_start'), c.get('event_end'))}\n{c['booking_url']}\n\n이 후보 채택:\n채택 {batch} {index}")
-        self.telegram(f"선택 예시: 채택 {batch} 1\n하루 한 후보를 채택할 수 있습니다. 채택은 게시 승인이 아닙니다. 주말 회차·예약 조건은 원문 확인이 필요해요.")
+            self.telegram(f"{index}. {c['title']}\n대상: {c['audience']}\n대상 검증: {c['grade_status']}\n장소: {c['place']}\n비용: {c['fee_label']}\n{event_schedule(c)}\n행사 기간: {display_period(c.get('event_start'),c.get('event_end'))}\n{c['source_url']}\n\n이 후보 채택:\n채택 {batch} {index}")
+        self.telegram(f"선택 예시: 채택 {batch} 1\n채택 후 초안을 만들고 별도 승인 후 게시합니다. 접수 안내가 없는 행사는 예약 불필요를 뜻하지 않으며 방문 전 확인이 필요합니다.")
         self.save(ledger, phase="choosing", choicesAt=time.time())
 
     def prepare_activity(self, c):
@@ -434,6 +511,9 @@ class CandidateBot(Bot):
         ledgers = self.ledgers()
         for ledger in ledgers:
             state = ledger.get("metadata", {}).get(TAG, {})
+            # Seoul is paused, including previously offered/unpublished Seoul drafts.
+            if state.get("source") != ACTIVE_SOURCE and not any(c.get("source")==ACTIVE_SOURCE for c in state.get("choices",[])):
+                continue
             if state.get("flow") != FLOW:
                 # Reconcile an already-started publication only; legacy pending approvals stay inactive.
                 if state.get("phase") == "publishing":

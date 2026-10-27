@@ -164,5 +164,50 @@ class ProductionRegressionTests(unittest.TestCase):
             bot.ensure_dm(ledger,{})
         api.assert_not_called()
 
+
+class SeongnamSwitchTests(unittest.TestCase):
+    def candidate(self, **changes):
+        from candidate_bot import ACTIVE_SOURCE, SELECTION_POLICY
+        c={"id":"seongnam-1","source":ACTIVE_SOURCE,"selection_policy":SELECTION_POLICY,
+           "candidate":True,"registration_mode":"required","registration_start":"2026-10-28T09:00:00+09:00",
+           "registration_end":"2026-10-30T18:00:00+09:00","event_start":"2026-11-01","event_end":"2026-11-02",
+           "source_url":"https://www.seongnam.go.kr/pm010201/1","booking_url":None,
+           "description":"나뭇잎의 모양을 관찰하고 서로 다른 특징을 비교합니다. 겨울을 준비하는 나무의 변화를 알아보고 숲을 탐방합니다.",
+           "summary":"나뭇잎의 모양을 관찰하고 서로 다른 특징을 비교합니다.",
+           "title":"성남 체험","audience":"누구나","grade_status":"needs_review",
+           "place":"성남시청","fee_label":"무료","checked_at":"2026-10-27T12:00:00+09:00"}
+        return {**c,**changes}
+    def test_only_tomorrow_registration(self):
+        from candidate_bot import active_candidate
+        now=dt.datetime(2026,10,27,12,tzinfo=KST)
+        self.assertTrue(active_candidate(self.candidate(),now))
+        for changes in ({"registration_start":"2026-10-27T09:00:00+09:00"},{"registration_start":"2026-10-29T09:00:00+09:00"},{"source":"seoul"},{"source_url":"https://example.com"}):
+            self.assertFalse(active_candidate(self.candidate(**changes),now))
+    def test_weekend_to_next_month_window(self):
+        from candidate_bot import active_candidate,seongnam_window
+        now=dt.datetime(2026,10,27,12,tzinfo=KST)
+        self.assertEqual(seongnam_window(now),(dt.date(2026,10,31),dt.date(2026,11,30)))
+        for day,expected in (("2026-10-30",False),("2026-10-31",True),("2026-11-30",True),("2026-12-01",False)):
+            c=self.candidate(registration_mode="not_listed",registration_start=None,registration_end=None,event_start=day,event_end=day)
+            self.assertEqual(active_candidate(c,now),expected)
+    def test_no_registration_draft_has_event_source_not_seoul_or_signup_dates(self):
+        c=self.candidate(registration_mode="not_listed",registration_start=None,registration_end=None)
+        caption=make_draft(c)["caption"]
+        self.assertIn(c["source_url"],caption)
+        self.assertIn("성남시청",caption)
+        for word in ("신청 시작:","신청 마감:","서울시 공공서비스예약","하트","댓글"):
+            self.assertNotIn(word,caption)
+    def test_seoul_pending_draft_is_paused(self):
+        bot=CandidateBot({"ZERNIO_API_KEY":"test","INSTAGRAM_ACCOUNT_ID":"ig","TELEGRAM_ACCOUNT_ID":"tg","TELEGRAM_CONVERSATION_ID":"c","APPROVER_ID":"42"})
+        bot.ledgers=lambda:[{"metadata":{TAG:{"flow":FLOW,"phase":"pending","choices":[{"id":"S1"}]}}}]
+        with patch.object(bot,"check") as check,patch.object(bot,"z") as api:
+            bot.run("poll")
+            check.assert_not_called()
+            api.assert_not_called()
+    def test_day_only_selection_deadline_includes_last_day(self):
+        from candidate_bot import selection_deadline
+        expected=dt.datetime(2026,11,1,23,59,59,tzinfo=KST).timestamp()
+        self.assertEqual(selection_deadline({"event_end":"2026-11-01"}),expected)
+
 if __name__=="__main__":
     unittest.main()
