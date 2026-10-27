@@ -23,6 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
+      FONT_PATH: ${{ github.workspace }}/.fonts/NotoSansCJKkr-Regular.otf
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
       INSTAGRAM_ACCOUNT_ID: ${{ vars.INSTAGRAM_ACCOUNT_ID || fromJSON(secrets.BOT_CONFIG || '{}').INSTAGRAM_ACCOUNT_ID }}
@@ -36,9 +37,21 @@ jobs:
           python-version: '3.12'
       - run: pip install -r requirements.txt
       - run: python -m unittest -v
-      - name: Install Korean font
-        if: always()
-        run: sudo apt-get update -qq && sudo apt-get install -y fonts-noto-cjk
+      - name: Cache Korean font
+        uses: actions/cache@v4
+        with:
+          path: .fonts
+          key: noto-cjk-kr-523d033d6cb47f4a80c58a35753646f5c3608a78
+      - name: Prepare Korean font
+        timeout-minutes: 2
+        run: |
+          mkdir -p .fonts
+          if [ ! -f "$FONT_PATH" ]; then
+            curl --fail --location --max-time 60 --retry 1 --retry-max-time 90 \
+              https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78/Sans/OTF/Korean/NotoSansCJKkr-Regular.otf \
+              --output "$FONT_PATH"
+          fi
+          echo "6bcb2a0703aa137e874fc2dffa85f6c21ba9a67fa329e81b8c801663af7e992a  $FONT_PATH" | sha256sum --check
       - name: Verify free project acknowledgement
         if: github.event_name != 'push'
         env:
