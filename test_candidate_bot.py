@@ -15,7 +15,7 @@ class CandidateTests(unittest.TestCase):
         self.assertEqual(display_date("invalid"), "공식 안내 확인")
         c={"summary":"숲의 식물을 관찰하는 체험입니다.","title":"체험","audience":"초1~3","place":"서울","fee_label":"무료","grade_status":"explicit_match",
            "registration_start":"2026-10-22T10:00:00+09:00","registration_end":"2026-10-23T17:00:00+09:00",
-           "event_start":"2026-11-01T00:00:00+09:00","event_end":"2026-11-30T00:00:00+09:00","checked_at":"2026-10-21"}
+           "event_start":"2026-11-01T00:00:00+09:00","event_end":"2026-11-30T00:00:00+09:00","checked_at":"2026-10-21","booking_url":"https://example.go.kr/book"}
         caption=make_draft(c)["caption"]
         self.assertNotIn("T10:",caption)
         self.assertNotIn("+09:00",caption)
@@ -96,9 +96,9 @@ class RevisionTests(unittest.TestCase):
         self.assertEqual(len(remote["mediaItems"]),5)
         state=ledger["metadata"][TAG]
         self.assertEqual(state["phase"],"pending")
-        self.assertNotIn(candidate["booking_url"],remote["content"])
-        self.assertIn("팔로우하지 않아도",remote["content"])
-        self.assertIn("게시물 댓글에",remote["content"])
+        self.assertIn(candidate["booking_url"],remote["content"])
+        self.assertNotIn("팔로우하지 않아도",remote["content"])
+        self.assertNotIn("게시물 댓글에",remote["content"])
         old={"direction":"incoming","senderId":"42","message":"승인 p","createdAt":message["createdAt"]}
         self.assertIsNone(approval(old,state,"42"))
 
@@ -130,6 +130,39 @@ class RevisionTests(unittest.TestCase):
         bot.gemini=lambda *a,**kw:(_ for _ in ()).throw(RuntimeError("quota"))
         bot.revise(ledger,{"id":"m","createdAt":dt.datetime.now(dt.timezone.utc).isoformat()},"수정")
         self.assertEqual(ledger["metadata"][TAG]["phase"],"revision_failed")
+
+
+class ProductionRegressionTests(unittest.TestCase):
+    def test_image_only_details_are_rejected_before_selection(self):
+        from candidate_bot import activity_source
+        for detail in ("3. 상세내용 4. 주의사항", "3. 상세내용 ↵ ↵ 4. 주의사항 ► 주의문"):
+            self.assertLess(len(activity_source({"description":detail})),40)
+
+    def test_registration_open_does_not_expire_selection(self):
+        stamp = dt.datetime.now(dt.timezone.utc)
+        c = {"registration_start":(stamp-dt.timedelta(hours=2)).isoformat(),
+             "registration_end":(stamp+dt.timedelta(days=2)).isoformat()}
+        state={"phase":"choosing","batch":"test","choices":[c],
+               "choicesAt":stamp.timestamp()-200,"choiceExpiresAt":stamp.timestamp()+3600}
+        msg={"direction":"incoming","senderId":"42","message":"채택 test 1","createdAt":stamp.isoformat()}
+        self.assertEqual(selection(msg,state,"42"),0)
+        c["registration_end"]=(stamp-dt.timedelta(seconds=1)).isoformat()
+        self.assertIsNone(selection(msg,state,"42"))
+
+    def test_telegram_uses_inbox_not_publishing_quota(self):
+        bot=CandidateBot({"TELEGRAM_ACCOUNT_ID":"tg","TELEGRAM_CONVERSATION_ID":"chat"})
+        with patch.object(bot,"z",return_value={"success":True,"data":{"messageId":"m"}}) as api:
+            bot.telegram("preview","https://example.go.kr/a.png")
+        path,method,body=api.call_args.args
+        self.assertEqual(path,"/inbox/conversations/chat/messages")
+        self.assertEqual(body["attachmentType"],"image")
+
+    def test_direct_link_does_not_create_dm_automation(self):
+        bot=CandidateBot({})
+        ledger={"metadata":{TAG:{"bookingDelivery":"direct_link"}}}
+        with patch.object(bot,"z") as api:
+            bot.ensure_dm(ledger,{})
+        api.assert_not_called()
 
 if __name__=="__main__":
     unittest.main()
