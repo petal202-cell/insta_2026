@@ -1,5 +1,17 @@
 # 주말 아이들과 나들이 — 무료 클라우드 자동화
 
+
+## 현재 운영: 성남시청 (서울 일시 중지)
+
+- 접수기간이 있는 행사: 한국시간 **내일 접수 시작**인 후보만 사용합니다.
+- 접수 안내가 없는 행사: **이번 주 토요일부터 그 날짜의 다음 달 같은 날짜까지** 운영기간이 겹치는 후보를 사용합니다. 월말은 다음 달 마지막 날로 맞춥니다.
+- 접수기간이 없지만 본문에 예약·신청 안내가 있으면 미확인으로 제외합니다. 접수 안내 없음은 예약 불필요 확정이 아닙니다.
+- 활성 피드: https://raw.githubusercontent.com/petal202-cell/kids-weekend-api/main/data/seongnam-candidates.json
+- 서울 수집 워크플로와 기존 서울 후보/미게시 초안 처리를 일시 중지했습니다. 코드는 보존합니다.
+- 성남 후보 채택 → 초안 작성 → 별도 승인 후 게시 흐름을 사용합니다. 신청 없는 행사에는 신청 시작/마감 항목을 만들지 않고 공식 행사 안내 링크를 넣습니다.
+- 자세한 수집 조건: https://github.com/petal202-cell/kids-weekend-api/blob/main/SEONGNAM.md
+
+
 Render 서버나 OpenAI API를 쓰지 않습니다. GitHub Actions 표준 Linux runner + Gemini 2.5 Flash 무료 등급 + Pillow 정보 카드 + 기존 Zernio 연결을 사용합니다.
 
 ## 설정
